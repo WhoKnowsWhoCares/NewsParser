@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Last 20 News</title>
+</head>
+
+<body>
+  <h1>Last 20 Records</h1>
+  <ul id="record-list">
+    {% for record in records %}
+      <li>
+        <!-- ... -->
+      </li>
+    {% endfor %}
+  </ul>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <script>
+    var socket = io.connect('http://' + document.domain + ':' + location.port);
+
+    socket.on('connect', function() {
+      console.log('Connected to server');
+    });
+
+    socket.on('update', function(records) {
+      var recordList = document.getElementById('record-list');
+      recordList.innerHTML = '';
+
+      records.forEach(function(record) {
+        var li = document.createElement('li');
+        li.innerHTML = `
+          <h2>${record.title}</h2>
+          <p><strong>Author:</strong> ${record.author}</p>
+          <p><strong>Summary:</strong> ${record.summary}</p>
+          <p><strong>Text:</strong> ${record.text}</p>
+          <p><strong>Date:</strong> ${record.date}</p>
+        `;
+        recordList.appendChild(li);
+      });
+    });
+  </script>
+</body>
+</html>
+
+
+
+

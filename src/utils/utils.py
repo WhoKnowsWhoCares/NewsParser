@@ -1,23 +1,7 @@
-import logging
-import sys
 import random
 import httpx
 
-from user_agents import user_agent_list  # список из значений user-agent
-
-
-def create_logger(name, level=logging.INFO):
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s \n%(message)s \n' + '-'*30)
-    handler = logging.StreamHandler(sys.stdout)
-
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-    return logger
+from .user_agents import user_agent_list  # список из значений user-agent
 
 
 async def get_history(client, chat_id, n_test_chars=50, amount_messages=50):

@@ -1,8 +1,10 @@
+import os
+
 from collections import deque
 from telethon import TelegramClient, events
+from dotenv_vault import load_dotenv
 
-from config import api_id, api_hash
-
+load_dotenv()
 
 def telegram_parser(session, api_id, api_hash, telegram_channels, posted_q,
                     n_test_chars=50, check_pattern_func=None,
@@ -39,7 +41,7 @@ def telegram_parser(session, api_id, api_hash, telegram_channels, posted_q,
 
         channel = '@' + source.split('/')[-1]
 
-        post = f'<b>{channel}</b>\n{link}\n{news_text}'
+        post = f'{channel}\n{link}\n{news_text}'
 
         if send_message_func is None:
             print(post, '\n')
@@ -52,20 +54,17 @@ def telegram_parser(session, api_id, api_hash, telegram_channels, posted_q,
 
 
 if __name__ == "__main__":
-
     telegram_channels = {
         1099860397: 'https://t.me/rbc_news',
-        1428717522: 'https://t.me/gazprom',
-        1101170442: 'https://t.me/rian_ru',
-        1133408457: 'https://t.me/prime1',
-        1149896996: 'https://t.me/interfaxonline',
+        # 1428717522: 'https://t.me/gazprom',
+        # 1101170442: 'https://t.me/rian_ru',
+        # 1133408457: 'https://t.me/prime1',
+        # 1149896996: 'https://t.me/interfaxonline',
         # 1001029560: 'https://t.me/bcs_express',
-        1203560567: 'https://t.me/markettwits',
+        # 1203560567: 'https://t.me/markettwits',
     }
-
-    # Очередь из уже опубликованных постов, чтобы их не дублировать
     posted_q = deque(maxlen=20)
-
-    client = telegram_parser('gazp', api_id, api_hash, telegram_channels, posted_q)
-
+    api_id = os.getenv('api_id')
+    api_hash = os.getenv('api_hash')
+    client = telegram_parser('news_parser',api_id,api_hash,telegram_channels, posted_q)
     client.run_until_disconnected()

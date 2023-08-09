@@ -1,10 +1,12 @@
 import random
 import asyncio
-from collections import deque
 import httpx
-from scrapy.selector import Selector
 
-from utils import random_user_agent_headers
+from collections import deque
+from scrapy.selector import Selector
+from loguru import logger
+
+from utils.utils import random_user_agent_headers
 
 
 async def bcs_parser(httpx_client, posted_q, n_test_chars=50, 
@@ -72,4 +74,4 @@ if __name__ == "__main__":
 
     httpx_client = httpx.AsyncClient()
 
-    asyncio.run(bcs_parser(httpx_client, posted_q))
+    asyncio.run(bcs_parser(httpx_client, posted_q, logger=logger))
