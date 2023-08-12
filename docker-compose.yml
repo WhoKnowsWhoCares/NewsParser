@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+    app:
+        container_name: newsparser
+        restart: unless-stopped
+        build:
+            context: .
+            dockerfile: Dockerfile
+        environment:
+            - PYTHONUNBUFFERED=1
+            - MONGO_DB_URI=172.21.0.2:27017
+        networks:
+            - newsparser_default
+        command: ["python", "main.py"]
+    #     links:
+    #         - db
+    #     depends_on:
+    #         - db
+
+    # db:
+    #     container_name: mongo_db
+    #     image: mongo:latest
+    #     restart: always
+    #     ports:
+    #         - "27018:27017"
+    #     volumes:
+    #         - /var/lib/docker/volumes/mongo_data/_data:/data/db
+
+    # flask_web_app:
+    #     image: python:3.10-slim
+    #     working_dir: /app
+    #     environment:
+    #         - FLASK_APP=app.py
+    #         - FLASK_RUN_HOST=0.0.0.0
+    #     ports:
+    #         - "5000:5000"
+    #     networks:
+    #         - newsparser_default
+    #     healthcheck:
+    #         test: curl --fail http://localhost:5000 || exit 1
+    #     command: ["flask", "run", "--port", "5000"]
+
+networks:
+    newsparser_default:
+        external: true

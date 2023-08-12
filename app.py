@@ -28,11 +28,12 @@ def index():
 def send_update():
     records = collection.find().sort('parsing_date', -1).limit(20)
     records_json = json.dumps([{
-        "title": record['title'],
-        "source": record['source'],
-        "summary": record['summary'],
-        "text": record['text'],
-        "parsing_date": record['parsing_date'].strftime('%Y-%m-%d %H:%M:%S')
+        "title": record.get('title',''),
+        "summary": record.get('summary',''),
+        "text": record.get('text',''),
+        "source": record.get('source',''),
+        "link": record.get('link',''),
+        "parsing_dttm": record.get('parsing_dttm','').strftime('%Y-%m-%d %H:%M:%S')
     } for record in records])
     socketio.emit('update', records_json, broadcast=True)
 

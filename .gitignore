@@ -88,7 +88,7 @@ target/
 # Other
 *.png
 packages/
-poetry.lock
+mongo-config.js
 
 # RAR files
 *.rar
@@ -97,3 +97,4 @@ poetry.lock
 *.parq
 *.parquet
 *.csv
+*.session

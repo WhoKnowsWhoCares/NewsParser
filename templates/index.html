@@ -12,7 +12,11 @@
   <ul id="record-list">
     {% for record in records %}
       <li>
-        <!-- ... -->
+        <h2>{{record.title}}</h2>
+        <strong>Summary:</strong> {{record.summary}} <br/>
+        <strong>Text:</strong> {{record.text}} <br/>
+        <strong>Source:</strong> <a href={{record.link}}> {{record.source}} </a> <br/>
+        <strong>Date:</strong> {{record.parsing_dttm}} <br/>
       </li>
     {% endfor %}
   </ul>
@@ -33,10 +37,10 @@
         var li = document.createElement('li');
         li.innerHTML = `
           <h2>${record.title}</h2>
-          <p><strong>Author:</strong> ${record.author}</p>
-          <p><strong>Summary:</strong> ${record.summary}</p>
-          <p><strong>Text:</strong> ${record.text}</p>
-          <p><strong>Date:</strong> ${record.date}</p>
+          <strong>Summary:</strong> ${record.summary} <br/>
+          <strong>Text:</strong> ${record.text} <br/>
+          <strong>Source:</strong> <a href={{record.link}}> {{record.source}} </a> <br/>
+          <strong>Date:</strong> ${record.parsing_dttm} <br/>
         `;
         recordList.appendChild(li);
       });
