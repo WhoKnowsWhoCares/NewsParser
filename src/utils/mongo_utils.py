@@ -12,14 +12,13 @@ def get_db_connection():
         mongo_uri = f'{address}:{port}'
     login = os.getenv('mongodb_login')
     pwd = os.getenv('mongodb_pwd')
-    logger.info(f'Connecting to MongoDB: {mongo_uri}')
+    logger.debug(f'Connecting to MongoDB: {mongo_uri}')
     client = MongoClient(f'mongodb://{login}:{pwd}@{mongo_uri}/')
-    # client = MongoClient(f'mongodb://{mongo_uri}/')
     return client
     
 
 def insert_record_into_db(client, record_data):
-    logger.info('Inserting record into MongoDB')
+    logger.debug('Inserting record into MongoDB')
     db = client['news']
     collection = db['news']
     # Check if the key already exists in the collection
@@ -30,7 +29,8 @@ def insert_record_into_db(client, record_data):
     
     # Insert the record if the key does not exist
     collection.insert_one(record_data)
-    logger.info(f"Record inserted successfully. Title: {record_data['title']}")
+    logger.debug(f"Record inserted successfully. Title: {record_data['title']}")
+    return 0
     
     
 def get_history(connection, n_test_chars=50, amount_messages=50):
@@ -38,8 +38,8 @@ def get_history(connection, n_test_chars=50, amount_messages=50):
     db = connection['news']
     collection = db['news']
     history = []
-    messages = collection.find().sort('parsing_date', -1).limit(amount_messages)
+    messages = collection.find().sort('parsing_dttm', -1).limit(amount_messages)
     for message in messages:
-        text = f"{message.get('title','')}\n{message.get('summary','')}"
-        history.append(text[:n_test_chars].strip())
+        text = message.get('title','')
+        history.append(text)
     return history

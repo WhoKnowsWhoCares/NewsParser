@@ -1,0 +1,4 @@
+pymongo
+flask
+flask-socketio==5.3.5
+python-dotenv-vault==0.6.3

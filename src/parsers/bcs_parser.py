@@ -5,6 +5,7 @@ import httpx
 from collections import deque
 from scrapy.selector import Selector
 from loguru import logger
+from datetime import datetime
 
 from src.utils.utils import random_user_agent_headers, random_user_agent_header_from_file
 
@@ -15,22 +16,17 @@ async def bcs_parser(posted_q, news_queue,
     bcs_link = 'https://bcs-express.ru/category'
     source = 'www.bcs-express.ru'
     httpx_client = httpx.AsyncClient()
+
     while True:
         try:
-            header=random_user_agent_headers()
-            # header=random_user_agent_header_from_file('src/utils/user_agents_0623')
-            # ua = header['User-Agent']
-            # last_bracket = ua.rfind(')')
-            # ua = ua[:last_bracket] + '; ru) ' + ua[last_bracket + 1:]
-            # header['User-Agent'] = ua
-            # print(ua)
+            header = random_user_agent_headers()
             response = await httpx_client.get(bcs_link, headers=header)
             response.raise_for_status()
         except Exception as e:
             logger.error(f'{source} error pass\n{e}')
-            await asyncio.sleep(timeout*2 + random.uniform(0, 0.5))
+            await asyncio.sleep(timeout + random.uniform(0, 0.5))
             continue
-        # logger.info(f'Passed header: {header}')
+        logger.debug(f'Successfull header: {header}')
         selector = Selector(text=response.text)
 
         for row in selector.xpath('//div[@class="feed__list"]/div/div')[::-1]:
@@ -45,10 +41,10 @@ async def bcs_parser(posted_q, news_queue,
 
             if not (check_pattern_func is None):
                 if not check_pattern_func(news_text):
-                    logger.info('Filtered by parser')
+                    logger.debug('Filtered by parser')
                     continue
 
-            head = news_text[:n_test_chars].strip()
+            head = title[:n_test_chars]
             if head in posted_q:
                 continue
 
@@ -57,16 +53,17 @@ async def bcs_parser(posted_q, news_queue,
             if 'author' in link:
                 link = raw_link[1] if len(raw_link) > 1 else ''
 
-            post = f'{source}\n{source + link}\n{news_text}'
+            today = datetime.today().strftime('%Y-%m-%d')
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            post = {'source':source, 'title':title, 'summary':summary,
+                    'link':link, 'publish_dt':today, 'parsing_dttm':now}
 
             posted_q.appendleft(head)
             await news_queue.put(post)
-            
-            logger.info(post)
 
         await asyncio.sleep(timeout + random.uniform(0, 0.5))
-
-
+        
+        
 if __name__ == "__main__":
 
     # Очередь из уже опубликованных постов, чтобы их не дублировать

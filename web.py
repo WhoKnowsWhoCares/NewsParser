@@ -14,19 +14,23 @@ socketio = SocketIO(app)
 # Connect to MongoDB
 login = os.getenv('mongodb_login')
 pwd = os.getenv('mongodb_pwd')
-address = os.getenv('mongodb_address')
-port = os.getenv('mongodb_port')
-client = MongoClient(f'mongodb://{login}:{pwd}@{address}:{port}/')
-db = client['news']
-collection = db['news']
+mongo_uri = os.getenv('MONGO_DB_URI')
+if not mongo_uri:
+    address = os.getenv('mongodb_address')
+    port = os.getenv('mongodb_port')
+    mongo_uri = f'{address}:{port}'
+client = MongoClient(f'mongodb://{login}:{pwd}@{mongo_uri}/')
+collection = client['news']['news']
+
 
 @app.route('/')
 def index():
-    records = collection.find().sort('parsing_date', -1).limit(20)
+    records = collection.find().sort('parsing_dttm', -1).limit(20)
     return render_template('index.html', records=records)
 
+
 def send_update():
-    records = collection.find().sort('parsing_date', -1).limit(20)
+    records = collection.find().sort('parsing_dttm', -1).limit(20)
     records_json = json.dumps([{
         "title": record.get('title',''),
         "summary": record.get('summary',''),
@@ -37,5 +41,6 @@ def send_update():
     } for record in records])
     socketio.emit('update', records_json, broadcast=True)
 
+
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=80, debug=True)
+    socketio.run(app)

@@ -1,6 +1,7 @@
 import os
 import asyncio
 
+from datetime import datetime
 from collections import deque
 from telethon import TelegramClient, events
 from loguru import logger
@@ -20,35 +21,39 @@ def get_tg_client():
 async def telegram_parser(telegram_channels, posted_q, news_queue,
                     n_test_chars=50, check_pattern_func=None, timeout=None):
     '''Телеграм парсер'''
-    # Ссылки на телеграмм каналы
-    # telegram_channels_links = list(telegram_channels.values())
-    client = get_tg_client().start()
-    async with client:
-        @client.on(events.NewMessage(chats=telegram_channels))
-        async def handler(event):
-            '''Забирает посты из телеграмм каналов и посылает их в наш канал'''
-            if event.raw_text == '':
+    client = get_tg_client()
+    await client.start()
+    
+    @client.on(events.NewMessage(chats=telegram_channels))
+    async def handler(event):
+        '''Забирает посты из телеграмм каналов и посылает их в наш канал'''
+        if event.raw_text == '':
+            return
+        news_text = ' '.join(event.raw_text.split('\n'))
+        if not (check_pattern_func is None):
+            if not check_pattern_func(news_text):
+                logger.debug('Filtered message')
                 return
-            news_text = ' '.join(event.raw_text.split('\n')[:2])
-            if not (check_pattern_func is None):
-                if not check_pattern_func(news_text):
-                    logger.info('Filtered message')
-                    return
-            head = news_text[:n_test_chars].strip()
-            if head in posted_q:
-                return
+        title = event.raw_text.split('\n')[0]
+        text = event.raw_text.split('\n')[1:]
+        head = title[:n_test_chars]
+        if head in posted_q:
+            return
+        
+        source = telegram_channels[event.message.peer_id.channel_id]
+        link = f'{source}/{event.message.id}'
+        channel = '@' + source.split('/')[-1]
+        today = datetime.today().strftime('%Y-%m-%d')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        post = {'source':channel, 'title':title, 'text':text,
+                'link':link, 'publish_dt':today, 'parsing_dttm':now}
 
-            source = telegram_channels[event.message.peer_id.channel_id]
-            link = f'{source}/{event.message.id}'
-            channel = '@' + source.split('/')[-1]
-            post = f'{channel}\n{link}\n{news_text}'
+        posted_q.appendleft(head)
+        await news_queue.put(post)
+            
+        logger.info(f'Recieved message in telegram: {head}')
 
-            posted_q.appendleft(head)
-            await news_queue.put(post)
-                
-            logger.info(post)
-
-    return client
+    await client.run_until_disconnected()
 
 
 if __name__ == "__main__":

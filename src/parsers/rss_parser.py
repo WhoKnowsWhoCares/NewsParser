@@ -21,35 +21,35 @@ async def rss_parser(source:str, rss_link:str, parsed_q:deque, queue,
             response.raise_for_status()
         except Exception as e:
             logger.error(f'rss error parsing\n{e}')
-            await asyncio.sleep(timeout*2 - random.uniform(0, 0.5))
+            await asyncio.sleep(timeout - random.uniform(0, 0.5))
             continue
-        # logger.info(f'Passed header: {header}')
+        # logger.debug(f'Passed header: {header}')
         feed = feedparser.parse(response.text)
 
         for entry in feed.entries[:20][::-1]:
             if 'summary' not in entry and 'title' not in entry:
-                logger.info('No title or summary found')
+                logger.debug('No title or summary found')
                 continue
             summary = entry['summary'] if 'summary' in entry else ''
             title = entry['title'] if 'title' in entry else ''
-            news_text = f'{title}\n{summary}'
+            if title in parsed_q:
+                continue
+            text = entry['text'] if 'text' in entry else ''
+            news_text = f'{title}\n{summary}\n{text}'
             if not (check_pattern_func is None):
                 if not check_pattern_func(news_text):
-                    logger.info('Filtered by parser')
+                    logger.debug('Filtered by parser')
                     continue
-            key = news_text[:n_test_chars].strip()
-            if key in parsed_q:
-                continue
             link = entry['link'] if 'link' in entry else ''
             today = datetime.today().strftime('%Y-%m-%d')
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            post = {'source':source, 'title':title, 'summary':summary, 
+            post = {'source':source, 'title':title, 'summary':summary, 'text':text,
                     'link':link, 'publish_dt':today, 'parsing_dttm':now}
 
-            parsed_q.appendleft(key)
+            parsed_q.appendleft(title)
             await queue.put(post)
             
-            logger.info(post)
+            logger.debug(f'Recieved rss post {source} - {title}')
 
         await asyncio.sleep(timeout - random.uniform(0, 0.5))
 

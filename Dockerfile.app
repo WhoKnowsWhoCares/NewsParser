@@ -10,19 +10,15 @@ ENV PYTHONDONTWRITEBYTECODE 1 \
 RUN mkdir /app
 WORKDIR /app
 
-FROM base as builder
-
 COPY requirements.txt .
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-        pip install -r requirements.txt
+        pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
-COPY main.py .
-COPY .env .
-COPY src/ ./src/
-COPY templates/ ./templates/
-# COPY newsparser.session /app/
+COPY main.py /app
+COPY .env /app
+COPY src/ /app/src/
+COPY newsparser.session /app
 RUN mkdir /app/logs
 
 CMD ["python", "main.py"]

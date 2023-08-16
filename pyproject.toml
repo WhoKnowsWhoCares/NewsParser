@@ -1,24 +1,34 @@
 [tool.poetry]
 name = "newsparser"
 version = "0.1.0"
-description = "parse news"
+description = "Project for parsing news from different sources and save them in database and notify in telegram"
 authors = ["alexander <as.frantsev@gmail.com>"]
+readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
 httpx = "^0.24.1"
 feedparser = "^6.0.10"
-Telethon = "^1.29.2"
-telethon-cryptg = "^0.0.4"
+telethon = "^1.29.2"
 pymongo = "^4.4.1"
-Flask = "^2.3.2"
-Scrapy = "^2.10.0"
 loguru = "^0.7.0"
-python-dotenv-vault = "^0.6.3"
-Flask-SocketIO = "^5.3.5"
 requests = "^2.31.0"
 beautifulsoup4 = "^4.12.2"
+python-dotenv-vault = "^0.6.3"
+scrapy = "^2.10.0"
+python-telegram-bot = {extras = ["job-queue"], version = "^20.4"}
+
+
+[tool.poetry.group.dev.dependencies]
+flake8 = "^6.1.0"
+
+
+[tool.poetry.group.web.dependencies]
+flask = "^2.3.2"
+flask-socketio = "^5.3.5"
+pymongo = "^4.4.1"
+python-dotenv-vault = "^0.6.3"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
