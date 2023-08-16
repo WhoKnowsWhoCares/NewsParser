@@ -3,12 +3,12 @@ import asyncio
 import concurrent.futures
 
 from collections import deque
-from telethon import TelegramClient
+from contextlib import suppress
 from loguru import logger
 from dotenv_vault import load_dotenv
 
 from src.utils.mongo_utils import get_history, get_db_connection, insert_record_into_db
-from src.utils.telegram_utils import init_bot, send_tg_message_to_all
+from src.utils.telegram_utils import init_bot
 
 # Load environment variables
 load_dotenv()
@@ -18,29 +18,30 @@ from src.parsers.rss_parser import rss_parser
 from src.parsers.bcs_parser import bcs_parser
 
 logger.remove()
-logger.add("./logs/log_{time:YYYY-MM-DD}.log", level='DEBUG',
+LOGGING_LVL = 'INFO'
+logger.add("./logs/log_{time:YYYY-MM-DD}.log", level=LOGGING_LVL,
            rotation="00:01", retention="90 days",
            backtrace=True, diagnose=True)
-logger.add(sys.stdout, level='DEBUG')
+logger.add(sys.stdout, level=LOGGING_LVL)
 
 ###########################
 # Можно добавить телеграм канал, rss ссылку или изменить фильтр новостей
 
 telegram_channels = (
     'https://t.me/interfaxonline',
-    'https://t.me/rbc_news',
-    'https://t.me/rian_ru',
-    'https://t.me/prime1',
-    'https://t.me/bcs_express',
-    'https://t.me/markettwits',
-    'https://t.me/vadya93_official',
+    # 'https://t.me/rbc_news',
+    # 'https://t.me/rian_ru',
+    # 'https://t.me/prime1',
+    # 'https://t.me/bcs_express',
+    # 'https://t.me/markettwits',
+    # 'https://t.me/vadya93_official',
 )
 
 rss_channels = {
     'www.rbc.ru': 'https://rssexport.rbc.ru/rbcnews/news/20/full.rss',
-    # 'www.ria.ru': 'https://ria.ru/export/rss2/archive/index.xml',
+    'www.ria.ru': 'https://ria.ru/export/rss2/archive/index.xml',
     # 'www.1prime.ru': 'https://1prime.ru/export/rss2/index.xml',
-    # 'www.interfax.ru': 'https://www.interfax.ru/rss.asp',
+    'www.interfax.ru': 'https://www.interfax.ru/rss.asp',
 }
 
 
@@ -72,21 +73,21 @@ async def fetch_news(parser, args):
         logger.error(message)
 
 
-async def process_news(db_connection, queue):
+async def process_news(db_connection, news_queue, tg_queue):
     '''
     For each news in queue paste it into database, send to telegram
     '''
     logger.debug("Processing news")
     while True:
-        news = await queue.get()
-        res_code = insert_record_into_db(db_connection, news)
-        if res_code:
-            await send_tg_message_to_all(news)
-        queue.task_done()
+        news = await news_queue.get()
+        insert_record_into_db(db_connection, news)
+        await tg_queue.put(news)
+        news_queue.task_done()
    
 
-async def main():
+async def main(loop):
     news_queue = asyncio.Queue(maxsize = amount_messages)
+    tg_queue = asyncio.Queue(maxsize = amount_messages)
     parsed_q = deque(maxlen = amount_messages)
     connection = get_db_connection()
     parsed_q.extend(get_history(connection, n_test_chars=n_test_chars, amount_messages=amount_messages))
@@ -100,18 +101,30 @@ async def main():
     #         parsers.append(executor.submit(asyncio.run, fetch_news(rss_parser, (source, rss_link, parsed_q, news_queue))))  
 
     # init_bot()
-    tg_bot = asyncio.create_task(init_bot())
-    processor = asyncio.create_task(process_news(connection, news_queue))    
+    tg_bot = asyncio.create_task(init_bot(tg_queue))
+    processor = asyncio.create_task(process_news(connection, news_queue, tg_queue))    
     parsers = []
-    parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
-    # parsers.append(asyncio.create_task(fetch_news(telegram_parser, (telegram_channels, parsed_q, news_queue))))
-    # for source, rss_link in rss_channels.items():
-    #     parsers.append(asyncio.create_task(fetch_news(rss_parser, (source, rss_link, parsed_q, news_queue))))
+    # parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
+    # parsers.append(asyncio.create_task(fetch_news(telegram_parser, (loop, telegram_channels, parsed_q, news_queue))))
+    for source, rss_link in rss_channels.items():
+        parsers.append(asyncio.create_task(fetch_news(rss_parser, (source, rss_link, parsed_q, news_queue))))
     
-    await asyncio.gather(processor, tg_bot, *parsers, news_queue.join())
+    await asyncio.gather(processor, tg_bot, *parsers, news_queue.join(), tg_queue.join())
     logger.debug('Main processing finished')
 
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    try:
+        ret = loop.run_until_complete(main(loop)) or 0
+    except KeyboardInterrupt:
+        ret = 1
+    for task in asyncio.all_tasks(loop):
+        task.cancel()
+        if hasattr(task._coro, '__name__') and task._coro.__name__ == 'main':
+            continue
+        with suppress(asyncio.CancelledError):
+            loop.run_until_complete(task)
+    loop.stop()
+    loop.close()
+    exit(ret)

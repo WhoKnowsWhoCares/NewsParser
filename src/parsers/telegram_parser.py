@@ -4,25 +4,40 @@ import asyncio
 from datetime import datetime
 from collections import deque
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.errors import SessionPasswordNeededError
 from loguru import logger
 from dotenv_vault import load_dotenv
 
 load_dotenv()
 
 
-def get_tg_client():
-    session = 'newsparser'
+async def get_tg_client(loop):
+    session = os.getenv('session')
     api_id = os.getenv('api_id')
     api_hash = os.getenv('api_hash')
-    client = TelegramClient(session, api_id, api_hash)
+    phone = os.getenv('phone')
+    if not session or session == '':
+        print('crap')
+        client = await TelegramClient(StringSession(), api_id, api_hash, loop=loop).start()
+        logger.info(f'Session: {client.session.save()}')
+    else:
+        print('ok')
+        client = await TelegramClient(StringSession(session), api_id, api_hash, loop=loop).start()
     return client
 
 
-async def telegram_parser(telegram_channels, posted_q, news_queue,
+async def telegram_parser(loop, telegram_channels, posted_q, news_queue,
                     n_test_chars=50, check_pattern_func=None, timeout=None):
     '''Телеграм парсер'''
-    client = get_tg_client()
-    await client.start()
+    phone = os.getenv('phone')
+    client = await get_tg_client(loop)
+    if await client.is_user_authorized() == False:
+        await client.send_code_request(phone)
+        try:
+            await client.sign_in(phone, input('Enter the code: '))
+        except SessionPasswordNeededError:
+            await client.sign_in(password=input('Password: '))
     
     @client.on(events.NewMessage(chats=telegram_channels))
     async def handler(event):
@@ -57,8 +72,14 @@ async def telegram_parser(telegram_channels, posted_q, news_queue,
 
 
 if __name__ == "__main__":
-    telegram_channels = ('https://t.me/interfaxonline')
+    telegram_channels = ('https://t.me/interfaxonline',)
     posted_q = deque(maxlen=20)
     news_queue = asyncio.Queue(maxsize=20)
-    
-    asyncio.run(telegram_parser(telegram_channels, posted_q, news_queue))
+    loop = asyncio.get_event_loop()
+    try:
+        ret = loop.run_until_complete(telegram_parser(loop, telegram_channels, posted_q, news_queue)) or 0
+    except KeyboardInterrupt:
+        ret = 1
+    loop.stop()
+    loop.close()
+    exit(ret)

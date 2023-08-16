@@ -10,23 +10,44 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 
 SUBSCRIBERS_FILE = 'src/utils/tg_bot_subscribers'
 
-def init_bot():
+async def init_bot(queue):
     bot_token = os.getenv('bot_token')
     subscribers = load_subscribers()
     
     application = ApplicationBuilder().token(bot_token).build()
     application.bot_data['subscribers'] = subscribers
+    # application.bot_data['queue'] = queue
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('stop', stop))
     application.add_handler(MessageHandler(filters.Command("broadcast"), broadcast_message))
     
+    # job_queue = application.job_queue
+    # job_queue.run_once(process_queue, 5)
     logger.debug('Bot initialized successfully')
     try:
-        application.run_polling()
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        await process_queue(queue)
+        # application.run_polling()
     except Exception as e:
         logger.error(f'Processing tg messages has broken \n {e}')
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+    
 
 
+async def process_queue(queue, context: ContextTypes.DEFAULT_TYPE = None) -> None:
+    if context:
+        queue = context.bot_data.get('queue')
+    while True and queue:
+        message = await queue.get()
+        await send_tg_message_to_all(message, context)
+        queue.task_done()
+            
+        
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers = context.bot_data.get('subscribers', [])
@@ -44,7 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user_id = update.effective_chat.id
     subscribers = context.bot_data.get('subscribers', [])
     if user_id not in subscribers: 
         logger.debug(f'User not in subscribers: {user_id}')
@@ -70,10 +91,15 @@ def load_subscribers() -> list:
     return subscribers
 
 
-async def send_tg_message_to_all(message, check_pattern_func=None):
-    subscribers = load_subscribers()
-    for id in subscribers:
-        await send_tg_message(message, id, check_pattern_func=check_pattern_func)
+async def send_tg_message_to_all(message, context: ContextTypes.DEFAULT_TYPE = None):
+    if context:
+        subscribers = context.bot_data.get('subscribers', [])
+        for subscriber_id in subscribers:
+            await context.bot.send_message(subscriber_id, message)
+    else:
+        subscribers = load_subscribers()
+        for subscriber_id in subscribers:
+            await send_tg_message(subscriber_id, message)
 
 
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -83,7 +109,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await context.bot.send_message(subscriber_id, message)
 
 
-def send_tg_msg(message):
+def send_tg_message_to_me(message):
     logger.debug("Sending message to telegram")
     bot_token = os.getenv('bot_token')
     chat_id = os.getenv('chat_id')
@@ -100,7 +126,7 @@ def send_tg_msg(message):
     return response.status_code
 
     
-async def send_tg_message(message, chat_id, check_pattern_func=None):
+async def send_tg_message(chat_id, message, check_pattern_func=None):
     '''Через бот отправляет сообщение напрямую в канал через telegram api'''
     logger.debug("Sending message to telegram")
     bot_token = os.getenv('bot_token')    
@@ -135,4 +161,6 @@ async def send_tg_message(message, chat_id, check_pattern_func=None):
 
 if __name__ == '__main__':
     load_dotenv()
-    asyncio.run(init_bot())
+    queue = asyncio.Queue()
+    asyncio.run(init_bot(queue))
+    
