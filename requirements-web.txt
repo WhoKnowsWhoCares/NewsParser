@@ -1,7 +1,0 @@
-pymongo==4.4.1
-flask==2.3.2
-flask-socketio==5.3.5
-python-dotenv-vault==0.6.3
-gunicorn==21.2.0
-gevent-websocket==0.10.1
-eventlet==0.33.3

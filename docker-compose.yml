@@ -7,9 +7,6 @@ services:
         build:
             context: .
             dockerfile: Dockerfile.app
-        environment:
-            - PYTHONUNBUFFERED=1
-            - MONGO_DB_URI=172.21.0.3:27017
         networks:
             - newsparser_default
         command: ["python", "main.py"]
@@ -20,12 +17,6 @@ services:
         build:
             context: .
             dockerfile: Dockerfile.web
-        environment:
-            - PYTHONUNBUFFERED=1
-            - FLASK_APP=web.py
-            - FLASK_DEBUG=0
-            - FLASK_ENV=production
-            - MONGO_DB_URI=172.21.0.3:27017
         ports:
             - "5000:5000"
         networks:
@@ -33,8 +24,7 @@ services:
         healthcheck:
             test: curl --fail http://0.0.0.0:5000 || exit 1
         # command: ["flask", "run", "--host", "0.0.0.0", "--port", "5000"]
-        # command: ["gunicorn"  , "-b", "0.0.0.0:5000", "web:app"]
-        command: ["gunicorn","-k","eventlet","-w","1","-b","0.0.0.0:5000", "web:app"]
+        command: ["gunicorn","-k","eventlet","-b","0.0.0.0:5000", "web:app"]
 
 networks:
     newsparser_default:

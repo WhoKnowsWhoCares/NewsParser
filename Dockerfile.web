@@ -1,24 +1,49 @@
-FROM python:3.10-slim as base
+ARG APP_NAME=newsparser_web
+ARG PYTHON_VERSION=3.10.0
+ARG POETRY_VERSION=1.5.1
+ARG POETRY_HOME=/app/poetry
 
-# set environment variables
+FROM python:3.10-slim as builder
+
 ENV PYTHONDONTWRITEBYTECODE 1 \
     PYTHONFAULTHANDLER=1 \
     PYTHONHASHSEED=random \
     PYTHONUNBUFFERED=1
+ENV POETRY_VERSION=$POETRY_VERSION \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1
 
-# Set the working directory to /app
-RUN mkdir /app
+RUN mkdir -p /app
 WORKDIR /app
 
-COPY requirements-web.txt .
+# RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME python3 -
+RUN pip install poetry
+COPY poetry.lock pyproject.toml /app/
+RUN poetry install --only web
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-        pip install --no-cache-dir -r requirements-web.txt
+# COPY requirements-web.txt .
+# RUN --mount=type=cache,target=/root/.cache/pip \
+#         pip install --no-cache-dir -r requirements-web.txt
+
+
+FROM python:3.10-slim as base
+
+ENV PYTHONDONTWRITEBYTECODE 1 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PYTHONUNBUFFERED=1
+ENV FLASK_APP=web.py \
+    FLASK_DEBUG=0 \
+    FLASK_ENV=production
+
+COPY --from=builder /app /app
+WORKDIR /app
 
 COPY web.py /app
 COPY .env /app
 COPY templates/ /app/templates/
 
+ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 5000
 
 # CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]

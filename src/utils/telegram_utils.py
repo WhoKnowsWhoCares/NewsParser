@@ -1,7 +1,6 @@
 import os
 import httpx
 import asyncio
-import requests
 
 from dotenv_vault import load_dotenv
 from loguru import logger
@@ -16,20 +15,15 @@ async def init_bot(queue):
     
     application = ApplicationBuilder().token(bot_token).build()
     application.bot_data['subscribers'] = subscribers
-    # application.bot_data['queue'] = queue
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('stop', stop))
-    application.add_handler(MessageHandler(filters.Command("broadcast"), broadcast_message))
     
-    # job_queue = application.job_queue
-    # job_queue.run_once(process_queue, 5)
     logger.debug('Bot initialized successfully')
     try:
         await application.initialize()
         await application.start()
         await application.updater.start_polling()
         await process_queue(queue)
-        # application.run_polling()
     except Exception as e:
         logger.error(f'Processing tg messages has broken \n {e}')
     finally:
@@ -100,30 +94,6 @@ async def send_tg_message_to_all(message, context: ContextTypes.DEFAULT_TYPE = N
         subscribers = load_subscribers()
         for subscriber_id in subscribers:
             await send_tg_message(subscriber_id, message)
-
-
-async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.message.text[10:]  # Remove "/broadcast " from the message
-    subscribers = context.bot_data.get('subscribers', [])
-    for subscriber_id in subscribers:
-        await context.bot.send_message(subscriber_id, message)
-
-
-def send_tg_message_to_me(message):
-    logger.debug("Sending message to telegram")
-    bot_token = os.getenv('bot_token')
-    chat_id = os.getenv('chat_id')
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": f"/broadcast {message}"
-    }
-    response = requests.post(url, json=data)
-    if response.status_code == 200:
-        logger.debug(f"Sent successfully. Title: {message.get('title','')}")
-    else:
-        logger.error(f'Failed to send message.')
-    return response.status_code
 
     
 async def send_tg_message(chat_id, message, check_pattern_func=None):

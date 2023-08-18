@@ -7,16 +7,15 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-httpx = "^0.24.1"
 feedparser = "^6.0.10"
 telethon = "^1.29.2"
 pymongo = "^4.4.1"
 loguru = "^0.7.0"
-requests = "^2.31.0"
 beautifulsoup4 = "^4.12.2"
 python-dotenv-vault = "^0.6.3"
 scrapy = "^2.10.0"
 python-telegram-bot = {extras = ["job-queue"], version = "^20.4"}
+aiohttp = "^3.8.5"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -25,12 +24,10 @@ flake8 = "^6.1.0"
 
 [tool.poetry.group.web.dependencies]
 flask = "^2.3.2"
-flask-socketio = "^5.3.5"
 pymongo = "^4.4.1"
 python-dotenv-vault = "^0.6.3"
 gunicorn = "^21.2.0"
 eventlet = "^0.33.3"
-gevent-websocket = "^0.10.1"
 
 [build-system]
 requires = ["poetry-core"]
