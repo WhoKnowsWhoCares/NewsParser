@@ -16,7 +16,7 @@ from src.utils.telegram_utils import init_bot
 load_dotenv()
 
 logger.remove()
-LOGGING_LVL = 'WARNING'
+LOGGING_LVL = 'INFO'
 logger.add("./logs/log_{time:YYYY-MM-DD}.log", level=LOGGING_LVL,
            rotation="00:01", retention="90 days",
            backtrace=True, diagnose=True)
@@ -63,7 +63,7 @@ async def fetch_news(parser, args):
     '''
     For each source in list run parser which would put news in queue
     '''
-    logger.debug("Fetching news")
+    logger.info("Fetching news...")
     try:
         await parser(*args, timeout=timeout)
     except Exception as e:
@@ -75,7 +75,7 @@ async def process_news(db_connection, news_queue, tg_queue):
     '''
     For each news in queue paste it into database, send to telegram
     '''
-    logger.debug("Processing news")
+    logger.info("Processing news...")
     while True:
         news = await news_queue.get()
         result = insert_record_into_db(db_connection, news)
@@ -90,13 +90,13 @@ async def main():
     parsed_q = deque(maxlen = 10*amount_messages)
     connection = get_db_connection()
     parsed_q.extend(get_history(connection, amount_messages=10*amount_messages))
-    logger.debug(f"DB history news ready")
     
+    logger.info(f"Start to run parsers...")
     tg_bot = asyncio.create_task(init_bot(tg_queue))
     processor = asyncio.create_task(process_news(connection, news_queue, tg_queue))    
     parsers = []
     # parsers.append(asyncio.create_task(fetch_news(telegram_parser, (loop, telegram_channels, parsed_q, news_queue))))
-    parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
+    # parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
     for source, (rss_link, rss_text_xpath) in rss_channels.items():
         parsers.append(
             asyncio.create_task(
@@ -105,7 +105,7 @@ async def main():
         )
     
     await asyncio.gather(processor, tg_bot, *parsers, news_queue.join(), tg_queue.join())
-    logger.debug('Main processing finished')
+    logger.info('Main processing finished')
 
 
 if __name__ == '__main__':

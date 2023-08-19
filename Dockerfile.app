@@ -39,7 +39,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY main.py /app
 COPY .env /app
 COPY src/ /app/src/
-COPY newsparser.session /app
 RUN mkdir /app/logs
 
 CMD ["python", "main.py"]

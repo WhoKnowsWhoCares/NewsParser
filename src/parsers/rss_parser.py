@@ -16,12 +16,12 @@ async def get_text(link:str, rss_text_xpath: str):
         async with ClientSession() as session:
             async with session.get(link, params=header) as response:
                 response_text = await response.text()
+                selector = Selector(text=response_text)
+                text = [row.extract().strip() for row in selector.xpath(rss_text_xpath)]
+                text = '\n'.join(filter(None, text))
     except Exception as e:
         logger.error(f'rss error parsing text of {link}: {e}')
-    selector = Selector(text=response_text)
-    text = [row.extract().strip() for row in selector.xpath(rss_text_xpath)]
-    text = '\n'.join(filter(None, text))
-    logger.debug(f'Parsed text for link {link}: {text}')
+    logger.debug(f'Text parsed for link {link}')
     return text
 
 
@@ -35,11 +35,11 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
             async with ClientSession() as session:
                 async with session.get(rss_link,params=header) as response:
                     response_text = await response.text()
+                    feed = feedparser.parse(response_text)
         except Exception as e:
             logger.error(f'rss error parsing on {source}: {e}')
             await asyncio.sleep(timeout - random.uniform(0, 0.5))
             continue
-        feed = feedparser.parse(response_text)
 
         for entry in feed.entries[:20][::-1]:
             if 'summary' not in entry and 'title' not in entry:
