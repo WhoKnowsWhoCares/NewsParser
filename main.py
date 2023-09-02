@@ -1,8 +1,9 @@
+import os
 import sys
 import asyncio
+import uvloop
 
 from collections import deque
-from contextlib import suppress
 from loguru import logger
 from dotenv_vault import load_dotenv
 
@@ -16,23 +17,23 @@ from src.utils.telegram_utils import init_bot
 load_dotenv()
 
 logger.remove()
-LOGGING_LVL = 'INFO'
-logger.add("./logs/log_{time:YYYY-MM-DD}.log", level=LOGGING_LVL,
+logging_lvl = os.getenv('logging_lvl', 'INFO')
+logger.add("./logs/log_{time:YYYY-MM-DD}.log", level=logging_lvl,
            rotation="00:01", retention="90 days",
            backtrace=True, diagnose=True)
-logger.add(sys.stdout, level=LOGGING_LVL)
+logger.add(sys.stdout, level=logging_lvl)
 
 ###########################
 # Можно добавить телеграм канал, rss ссылку или изменить фильтр новостей
 
 telegram_channels = (
-    'https://t.me/interfaxonline',
-    # 'https://t.me/rbc_news',
-    # 'https://t.me/rian_ru',
-    # 'https://t.me/prime1',
-    # 'https://t.me/bcs_express',
-    # 'https://t.me/markettwits',
-    # 'https://t.me/vadya93_official',
+    'interfaxonline',
+    'rbc_news',
+    'rian_ru',
+    'prime1',
+    'bcs_express',
+    'markettwits',
+    'vadya93_official',
 )
 
 rss_channels = {
@@ -54,7 +55,7 @@ rss_channels = {
 amount_messages = 10
 
 # +/- интервал между запросами у rss и кастомного парсеров в секундах
-timeout = 10
+timeout = 30
 
 ###########################
 
@@ -63,12 +64,10 @@ async def fetch_news(parser, args):
     '''
     For each source in list run parser which would put news in queue
     '''
-    logger.info("Fetching news...")
     try:
         await parser(*args, timeout=timeout)
     except Exception as e:
-        message = f'ERROR: {parser} parser is down! \n{e}'
-        logger.error(message)
+        logger.error(f'Error parsing news, {parser} parser is down! \n{e}')
 
 
 async def process_news(db_connection, news_queue, tg_queue):
@@ -76,12 +75,15 @@ async def process_news(db_connection, news_queue, tg_queue):
     For each news in queue paste it into database, send to telegram
     '''
     logger.info("Processing news...")
-    while True:
-        news = await news_queue.get()
-        result = insert_record_into_db(db_connection, news)
-        if result:
-            await tg_queue.put(news)
-        news_queue.task_done()
+    try:
+        while True:
+            news = await news_queue.get()
+            result = insert_record_into_db(db_connection, news)
+            if result:
+                await tg_queue.put(news)
+            news_queue.task_done()
+    except Exception as e:
+        logger.error(f'Error while processing news \n{e}')     
    
 
 async def main():
@@ -95,14 +97,14 @@ async def main():
     tg_bot = asyncio.create_task(init_bot(tg_queue))
     processor = asyncio.create_task(process_news(connection, news_queue, tg_queue))    
     parsers = []
-    # parsers.append(asyncio.create_task(fetch_news(telegram_parser, (loop, telegram_channels, parsed_q, news_queue))))
+    parsers.append(asyncio.create_task(fetch_news(telegram_parser, (telegram_channels, parsed_q, news_queue))))
     # parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
-    for source, (rss_link, rss_text_xpath) in rss_channels.items():
-        parsers.append(
-            asyncio.create_task(
-                fetch_news(rss_parser,(source, rss_link,rss_text_xpath,parsed_q, news_queue))
-            )
-        )
+    # for source, (rss_link, rss_text_xpath) in rss_channels.items():
+    #     parsers.append(
+    #         asyncio.create_task(
+    #             fetch_news(rss_parser,(source, rss_link,rss_text_xpath,parsed_q, news_queue))
+    #         )
+    #     )
     
     await asyncio.gather(processor, tg_bot, *parsers, news_queue.join(), tg_queue.join())
     logger.info('Main processing finished')
@@ -110,10 +112,12 @@ async def main():
 
 if __name__ == '__main__':
     try:
-        loop = asyncio.get_event_loop()
+        loop = uvloop.new_event_loop()
+        asyncio.set_event_loop(loop)
         loop.run_until_complete(main())
     except KeyboardInterrupt:
         logger.info('Event loop were interrupted')
     finally:
         for task in asyncio.all_tasks(loop):
             task.cancel()
+        loop.close()

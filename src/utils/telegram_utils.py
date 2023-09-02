@@ -122,6 +122,10 @@ async def send_tg_message(chat_id, message, check_pattern_func=None):
         async with httpx.AsyncClient() as client:
             response = await client.get(url, params=params, headers=headers)
             response.raise_for_status()
+            
+        # async with ClientSession() as session:
+        #     async with session.get(url, params=params) as response:
+        #         status = response.status
     except Exception as e:
         logger.error(e)
         return -1

@@ -7,6 +7,13 @@ from datetime import datetime
 from collections import deque
 from loguru import logger
 from scrapy.selector import Selector
+from langdetect import detect
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.luhn import LuhnSummarizer
+summarizer = LuhnSummarizer()
+import nltk
+nltk.download('punkt')
 
 from src.utils.utils import random_user_agent_headers
 
@@ -41,7 +48,7 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
             await asyncio.sleep(timeout - random.uniform(0, 0.5))
             continue
 
-        for entry in feed.entries[:20][::-1]:
+        for entry in feed.entries[:10][::-1]:
             if 'summary' not in entry and 'title' not in entry:
                 logger.debug('No title or summary found')
                 continue
@@ -61,6 +68,17 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
                 if not check_pattern_func(news_text):
                     logger.debug('Filtered by parser')
                     continue
+            if summary == '' and text != '':
+                lang = detect(text)
+                if lang == 'en':
+                    lang = 'english'
+                    logger.debug('EN text')
+                elif lang == 'ru':
+                    lang = 'russian'
+                    logger.debug('RU text')
+                parser = PlaintextParser.from_string(text,Tokenizer(lang))
+                summ = summarizer(parser.document, 1)
+                summary = '\n'.join([str(sentence) for sentence in summ])
             today = datetime.today().strftime('%Y-%m-%d')
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             post = {'source':source, 'title':title, 'summary':summary, 'text':text,
@@ -75,16 +93,15 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
 
 
 if __name__ == "__main__":
-    source = 'www.rbc.ru'
     # rss_link = 'https://rssexport.rbc.ru/rbcnews/news/20/full.rss'
     rss_link = 'https://1prime.ru/export/rss2/index.xml'
+    xpath = '//div[contains(@class,"article-body")]/p/text()'
+    source = rss_link.split('/')[2]
     parsed_q = deque(maxlen=20)
     news_queue = asyncio.Queue(maxsize=20)
     try:
-        loop = asyncio.get_event_loop()
-        asyncio.run(rss_parser(source, rss_link, '', parsed_q, news_queue))
+        asyncio.run(rss_parser(source, rss_link, xpath, parsed_q, news_queue))
     except KeyboardInterrupt:
         logger.info('Event loop were interrupted')
-    finally:
-        for task in asyncio.all_tasks(loop):
-            task.cancel()
+    except Exception as e:
+        logger.error(f'Error in telegram parser: {e}')

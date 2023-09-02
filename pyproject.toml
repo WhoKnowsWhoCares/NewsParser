@@ -8,7 +8,6 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 feedparser = "^6.0.10"
-telethon = "^1.29.2"
 pymongo = "^4.4.1"
 loguru = "^0.7.0"
 beautifulsoup4 = "^4.12.2"
@@ -16,10 +15,29 @@ python-dotenv-vault = "^0.6.3"
 scrapy = "^2.10.0"
 python-telegram-bot = {extras = ["job-queue"], version = "^20.4"}
 aiohttp = "^3.8.5"
+httpx = "^0.24.1"
+pyrogram = "^2.0.106"
+tgcrypto = "^1.2.5"
+uvloop = "^0.17.0"
+sumy = "^0.11.0"
+nltk = "^3.8.1"
+langdetect = "^1.0.9"
 
 
 [tool.poetry.group.dev.dependencies]
 flake8 = "^6.1.0"
+gensim = "^4.3.2"
+pandas = "^2.1.0"
+matplotlib = "^3.7.2"
+seaborn = "^0.12.2"
+ipykernel = "^6.25.1"
+sumy = "^0.11.0"
+nltk = "^3.8.1"
+transformers = "^4.32.1"
+tqdm = "^4.66.1"
+torch = "2.0.0"
+sentencepiece = "^0.1.99"
+pyrogram = "^2.0.106"
 
 
 [tool.poetry.group.web.dependencies]
