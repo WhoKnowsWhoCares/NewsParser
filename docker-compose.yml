@@ -23,8 +23,7 @@ services:
             - newsparser_default
         healthcheck:
             test: curl --fail http://0.0.0.0:5000 || exit 1
-        # command: ["flask", "run", "--host", "0.0.0.0", "--port", "5000"]
-        command: ["gunicorn","-k","eventlet","-b","0.0.0.0:5000", "web:app"]
+        command: ["gunicorn","-k","gevent","-b","0.0.0.0:5000", "web:app"]
 
 networks:
     newsparser_default:

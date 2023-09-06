@@ -2,13 +2,14 @@ import os
 import json
 
 from flask import Flask, render_template
-# from flask_socketio import SocketIO
+from flask_socketio import SocketIO
 from pymongo import MongoClient
 from dotenv_vault import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
+socketio = SocketIO(app)
 
 # Connect to MongoDB
 login = os.getenv('mongodb_login')
@@ -41,4 +42,5 @@ def send_update():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # app.run(host='0.0.0.0', port=5000, debug=True)
+    socketio.run(app)
