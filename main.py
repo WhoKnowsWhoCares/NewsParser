@@ -32,7 +32,7 @@ telegram_channels = (
     'rian_ru',
     'prime1',
     'bcs_express',
-    'markettwits',
+    # 'markettwits',
     'vadya93_official',
 )
 
@@ -99,12 +99,12 @@ async def main():
     parsers = []
     parsers.append(asyncio.create_task(fetch_news(telegram_parser, (telegram_channels, parsed_q, news_queue))))
     # parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
-    # for source, (rss_link, rss_text_xpath) in rss_channels.items():
-    #     parsers.append(
-    #         asyncio.create_task(
-    #             fetch_news(rss_parser,(source, rss_link,rss_text_xpath,parsed_q, news_queue))
-    #         )
-    #     )
+    for source, (rss_link, rss_text_xpath) in rss_channels.items():
+        parsers.append(
+            asyncio.create_task(
+                fetch_news(rss_parser,(source, rss_link,rss_text_xpath,parsed_q, news_queue))
+            )
+        )
     
     await asyncio.gather(processor, tg_bot, *parsers, news_queue.join(), tg_queue.join())
     logger.info('Main processing finished')

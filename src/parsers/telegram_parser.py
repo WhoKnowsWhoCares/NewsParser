@@ -38,7 +38,7 @@ def init_parser(telegram_channels, posted_q, news_queue,
                 logger.debug('Filtered message')
                 return
         title = text.split('\n')[0]
-        source = f'https://t.me/@{chat_name}'
+        source = f'https://t.me/{chat_name}'
         link = f'{source}/{message_id}'
         today = datetime.today().strftime('%Y-%m-%d')
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
