@@ -1,59 +1,45 @@
-https://habr.com/ru/post/689520/
+# NewsParser - news aggregator with ML improvements
+Get news from telegram/rss/web, summarize and show only best relevant according to user preferences. \
+Uses MongoDB as news storage, supposing you already have it configured and running. \
+For telegram parsing you need to have api_id and api_hash from [my.telegram.org](https://my.telegram.org/auth) \
+And for providing information to you it users telegram bot, so you need to have one. \
+As base for this project was used another [repo](https://github.com/cdies/simple_news_aggregator) 
 
-# агрегатор новостей
+## How to install
+### Install software via terminal
+First of all you need to have [Poetry](https://python-poetry.org/)
+```
+pip install poetry
+```
 
-### Для работы необходимо:
+### Clone github project, install dependencies
+```
+ git clone https://github.com/whoknowswhocares/newsparser \
+ cd ./newsparser \
+ poetry install
+```
 
-1. Добавить свои значения переменных в файл `config.py`:
-
-> 1.1 Параметры из [my.telegram.org](https://my.telegram.org)
-- `api_id = <Твой api_id int>`
-- `api_hash = <Твой api_hash str>`
-
-> 1.2 Бот из @BotFather
-- `bot_token = <Токен твоего бота str>`
-
-> 1.3 id канала, куда будут сливаться все новости
-- `chat_id = <Id твоего канала c минусом в начале int>`
-
-2. Запустить телеграм парсер `telegram_parser.py`, чтобы пройти аутентификацию в [telethon](https://docs.telethon.dev/en/stable/) и получить свои файлы сессии `bot.session` и `gazp.session`
+### Configure .env file
+Rename .ent_template to .env and provide some info:
+- `api_id, api_hash` - paramenters for telegram channels parsing from [my.telegram.org](https://my.telegram.org)
+- `bot_token` - your bot's token from @BotFather
+- `chat_id` - your chat id to initialize parsing session and to where you will recieve news
+- `mongo_*` - credentials for MongoDB
 
 
-### Агрегатор по умолчанию парсит новости из:
-> телеграм каналы
+## Current news sources:
+> telegram channels
 - [@rbc_news](https://t.me/rbc_news)
-- [@gazprom](https://t.me/gazprom)
 - [@rian_ru](https://t.me/rian_ru)
 - [@prime1](https://t.me/prime1)
 - [@interfaxonline](https://t.me/interfaxonline)
-- [@markettwits](https://t.me/markettwits)
+- [@bcs_express](https://t.me/bcs_express)
 
-> RSS каналы
+> RSS 
 - [www.rbc.ru](https://.rbc.ru)
 - [www.ria.ru](https://ria.ru)
 - [www.1prime.ru](https://1prime.ru)
 - [www.interfax.ru](https://www.interfax.ru)
 
-> новостные сайты
-- [www.bcs-express.ru](https://bcs-express.ru)
-
-### Настройка и запуск
-Фильтр по умолчанию настроен на газпром, газ и всё с этим связанное (хотя иногда проскакивают и другие новости). 
-Добавить/убавить свои каналы или поменять фильтры для новостей можно в файле `main.py`
-
-Каждый парсер написан таким образом, чтобы его можно было запустить отдельно от остальных. 
-Это значительно упрощает процесс добавления новых источников, их лучше проверять отдельно, чтобы убедиться в работоспособности. 
-Например, feedparser может не прочитать RSS канал и тогда его придется парсить вручную.
-- `telegram_parser.py` - парсер телеграм каналов
-- `rss_parser.py` - парсер RSS каналов
-- `bcs_parser.py` - кастомный парсер сайта [www.bcs-express.ru](https://bcs-express.ru/)
-- `main.py` - запускает все парсеры сразу, либо можно запустить в докере через `docker-compose.yml`
-
-
-
-
-<br/><br/>
----
-[![](https://habrastorage.org/webt/gz/gc/i6/gzgci6pivvdnk-gmj-kepml5q9y.gif)](https://yoomoney.ru/to/4100117863420642)
 
 
