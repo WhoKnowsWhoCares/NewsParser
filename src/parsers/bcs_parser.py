@@ -22,7 +22,7 @@ async def bcs_parser(posted_q, news_queue,
     while True:
         try:
             header = random_user_agent_headers()
-            async with ClientSession() as session:
+            async with ClientSession(trust_env=True) as session:
                 async with session.get(bcs_link,params=header) as response:
                     response_text = await response.text()
         except Exception as e:

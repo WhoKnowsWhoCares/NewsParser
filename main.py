@@ -24,7 +24,6 @@ logger.add("./logs/log_{time:YYYY-MM-DD}.log", level=logging_lvl,
 logger.add(sys.stdout, level=logging_lvl)
 
 ###########################
-# Можно добавить телеграм канал, rss ссылку или изменить фильтр новостей
 
 telegram_channels = (
     'interfaxonline',
@@ -32,7 +31,6 @@ telegram_channels = (
     'rian_ru',
     'prime1',
     'bcs_express',
-    # 'markettwits',
     'vadya93_official',
 )
 
@@ -49,12 +47,9 @@ rss_channels = {
 
 
 ###########################
-# Если у парсеров много ошибок или появляются повторные новости
 
-# Количество уже опубликованных постов, чтобы их не повторять
 amount_messages = 10
 
-# +/- интервал между запросами у rss и кастомного парсеров в секундах
 timeout = 30
 
 ###########################

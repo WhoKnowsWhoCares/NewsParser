@@ -7,7 +7,6 @@ FROM python:3.10-slim as builder
 
 ENV PYTHONDONTWRITEBYTECODE 1 \
     PYTHONFAULTHANDLER=1 \
-    PYTHONHASHSEED=random \
     PYTHONUNBUFFERED=1
 ENV POETRY_VERSION=$POETRY_VERSION \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
@@ -31,13 +30,12 @@ ENV PYTHONDONTWRITEBYTECODE 1 \
     PYTHONFAULTHANDLER=1 \
     PYTHONHASHSEED=random \
     PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --from=builder /app /app
 WORKDIR /app
-ENV PATH="/app/.venv/bin:$PATH"
 
-COPY main.py /app
-COPY .env /app
+COPY main.py .env *.session /app/
 COPY src/ /app/src/
 RUN mkdir /app/logs
 

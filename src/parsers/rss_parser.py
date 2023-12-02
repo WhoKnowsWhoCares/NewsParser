@@ -13,14 +13,14 @@ from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.luhn import LuhnSummarizer
 summarizer = LuhnSummarizer()
 import nltk
-nltk.download('punkt')
+# nltk.download('punkt')
 
 from src.utils.utils import random_user_agent_headers
 
 async def get_text(link:str, rss_text_xpath: str):
     try:
         header = random_user_agent_headers()
-        async with ClientSession() as session:
+        async with ClientSession(trust_env=True) as session:
             async with session.get(link, params=header) as response:
                 response_text = await response.text()
                 selector = Selector(text=response_text)
@@ -39,7 +39,7 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
     while True:
         try:
             header = random_user_agent_headers()
-            async with ClientSession() as session:
+            async with ClientSession(trust_env=True) as session:
                 async with session.get(rss_link,params=header) as response:
                     response_text = await response.text()
                     feed = feedparser.parse(response_text)
@@ -48,7 +48,7 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
             await asyncio.sleep(timeout - random.uniform(0, 0.5))
             continue
 
-        for entry in feed.entries[:10][::-1]:
+        for entry in feed.entries[:2][::-1]:
             if 'summary' not in entry and 'title' not in entry:
                 logger.debug('No title or summary found')
                 continue
