@@ -5,7 +5,7 @@ ARG POETRY_HOME=/app/poetry
 
 FROM python:3.10-slim as builder
 
-ENV PYTHONDONTWRITEBYTECODE 1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1
 ENV POETRY_VERSION=$POETRY_VERSION \
@@ -17,18 +17,13 @@ WORKDIR /app
 
 RUN pip install poetry
 COPY poetry.lock pyproject.toml /app/
-RUN poetry install --without dev,web
-
-# COPY requirements.txt .
-# RUN --mount=type=cache,target=/root/.cache/pip \
-#         pip install --no-cache-dir -r requirements.txt
+RUN poetry install --without dev
 
 
 FROM python:3.10-slim as base
 
-ENV PYTHONDONTWRITEBYTECODE 1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1 \
-    PYTHONHASHSEED=random \
     PYTHONUNBUFFERED=1
 ENV PATH="/app/.venv/bin:$PATH"
 

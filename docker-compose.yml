@@ -1,30 +1,85 @@
 version: '3.8'
 
 services:
+    # mongodb:
+    #     image: mongo:latest
+    #     container_name: news_db
+    #     restart: always
+    #     # environment:
+    #         # MONGO_INITDB_ROOT_USERNAME:  # change this
+    #         # MONGO_INITDB_ROOT_PASSWORD:  # change this
+    #         # DB_NAME: $DB_NAME
+    #         # DB_USER: $DB_USER
+    #         # DB_PASSWORD: $DB_PASSWORD
+    #     ports:
+    #         - 27017:27017
+    #     volumes:
+    #         - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    #     healthcheck:
+    #         test: "echo 'db.runCommand(\"ping\").ok'"
+    #         interval: 5s
+    #         timeout: 5s
+    #         retries: 3
+    #     networks:
+    #         - default
+    #         # static-network:
+    #         #     ipv4_address: 172.21.1.3
+
+    redis:
+        image: 'redis:latest'
+        container_name: user_db
+        restart: always
+        ports:
+            # - $REDIS_PORT:$REDIS_PORT
+            # - "6379:6379"
+            - "6379:6379"
+        # expose:
+            # - $REDIS_PORT
+            # - 6379
+        # environment:
+            # - ALLOW_EMPTY_PASSWORD=yes
+            # - REDIS_PASSWORD=$DB_PASSWORD
+            # - REDIS_DISABLE_COMMANDS=FLUSHDB,FLUSHALL,CONFIG
+        privileged: true
+        volumes:
+            - $PWD/redis_data:/var/lib/redis
+            - $PWD/redis.conf:/usr/local/etc/redis/redis.conf
+        networks:
+            # - newsparser_custom
+            - default
+            # static-network:
+            #     ipv4_address: 172.21.1.4
+        command: redis-server /usr/local/etc/redis/redis.conf #--requirepass $DB_PASSWORD
+
     app:
         container_name: newsparser
         restart: unless-stopped
         build:
             context: .
-            dockerfile: Dockerfile.app
+            dockerfile: Dockerfile
         networks:
-            - newsparser_default
+            # - newsparser_custom
+            - default
+            # static-network:
+            #     ipv4_address: 172.21.1.2
+        privileged: true
+        depends_on:
+            # - mongodb
+            - redis
+        # links:
+        #     - redis
         command: ["python", "main.py"]
 
-    web:
-        container_name: web
-        restart: unless-stopped
-        build:
-            context: .
-            dockerfile: Dockerfile.web
-        ports:
-            - "5000:5000"
-        networks:
-            - newsparser_default
-        healthcheck:
-            test: curl --fail http://0.0.0.0:5000 || exit 1
-        command: ["gunicorn","-k","gevent","-b","0.0.0.0:5000", "web:app"]
-
 networks:
-    newsparser_default:
-        external: true
+    # newsparser_custom:
+    default:
+        driver: bridge
+        # external: true
+          
+
+# networks:
+#   static-network:
+#     ipam:
+#       driver: default
+#       config:
+#         - subnet: 172.21.1.0/16

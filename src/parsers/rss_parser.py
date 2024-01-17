@@ -2,7 +2,7 @@ import random
 import asyncio
 import feedparser
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientError
 from datetime import datetime
 from collections import deque
 from loguru import logger
@@ -26,10 +26,14 @@ async def get_text(link:str, rss_text_xpath: str):
                 selector = Selector(text=response_text)
                 text = [row.extract().strip() for row in selector.xpath(rss_text_xpath)]
                 text = '\n'.join(filter(None, text))
+                logger.debug(f'Text parsed for link {link}')
+                return text
+    except ClientError as e:
+        logger.error(f'HTTP Request failed: {e}')
     except Exception as e:
         logger.error(f'rss error parsing text of {link}: {e}')
-    logger.debug(f'Text parsed for link {link}')
-    return text
+    return ''
+    
 
 
 async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,

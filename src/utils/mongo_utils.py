@@ -4,13 +4,14 @@ from loguru import logger
 
 
 def get_db_connection():
-    address = os.getenv('mongodb_address')
-    port = os.getenv('mongodb_port')
+    address = os.getenv('DB_HOST')
+    port = os.getenv('DB_PORT')
     mongo_uri = f'{address}:{port}'
-    login = os.getenv('mongodb_login')
-    pwd = os.getenv('mongodb_pwd')
+    login = os.getenv('DB_USER')
+    pwd = os.getenv('DB_PASSWORD')
     logger.debug(f'Connecting to MongoDB: {mongo_uri}')
-    client = MongoClient(f'mongodb://{login}:{pwd}@{mongo_uri}/')
+    # client = MongoClient(f'mongodb://{login}:{pwd}@{mongo_uri}/')
+    client = MongoClient('mongodb://localhost:27017')
     return client
     
 

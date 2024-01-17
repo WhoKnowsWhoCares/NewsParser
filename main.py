@@ -35,14 +35,14 @@ telegram_channels = (
 )
 
 rss_channels = {
-    'www.rbc.ru': ('https://rssexport.rbc.ru/rbcnews/news/20/full.rss', 
-                   '//div[contains(@class,"article__text")]/p/text()'),
+    # 'www.rbc.ru': ('https://rssexport.rbc.ru/rbcnews/news/20/full.rss', 
+    #                '//div[contains(@class,"article__text")]/p/text()'),
     'www.ria.ru': ('https://ria.ru/export/rss2/archive/index.xml',
                    '//div[contains(@class,"article__text")]/text()'),
-    'www.1prime.ru': ('https://1prime.ru/export/rss2/index.xml',
-                      '//div[contains(@class,"article-body")]/p/text()'),
-    'www.interfax.ru': ('https://www.interfax.ru/rss.asp',
-                        '//article[@itemprop="articleBody"]/p/text()'),
+    # 'www.1prime.ru': ('https://1prime.ru/export/rss2/index.xml',
+    #                   '//div[contains(@class,"article-body")]/p/text()'),
+    # 'www.interfax.ru': ('https://www.interfax.ru/rss.asp',
+    #                     '//article[@itemprop="articleBody"]/p/text()'),
 }
 
 
@@ -73,9 +73,9 @@ async def process_news(db_connection, news_queue, tg_queue):
     try:
         while True:
             news = await news_queue.get()
-            result = insert_record_into_db(db_connection, news)
-            if result:
-                await tg_queue.put(news)
+            # result = insert_record_into_db(db_connection, news)
+            # if result:
+            await tg_queue.put(news)
             news_queue.task_done()
     except Exception as e:
         logger.error(f'Error while processing news \n{e}')     
@@ -85,14 +85,15 @@ async def main():
     news_queue = asyncio.Queue(maxsize = amount_messages)
     tg_queue = asyncio.Queue(maxsize = amount_messages)
     parsed_q = deque(maxlen = 10*amount_messages)
-    connection = get_db_connection()
-    parsed_q.extend(get_history(connection, amount_messages=10*amount_messages))
+    connection = None
+    # connection = get_db_connection()
+    # parsed_q.extend(get_history(connection, amount_messages=10*amount_messages))
     
     logger.info(f"Start to run parsers...")
     tg_bot = asyncio.create_task(init_bot(tg_queue))
     processor = asyncio.create_task(process_news(connection, news_queue, tg_queue))    
     parsers = []
-    parsers.append(asyncio.create_task(fetch_news(telegram_parser, (telegram_channels, parsed_q, news_queue))))
+    # parsers.append(asyncio.create_task(fetch_news(telegram_parser, (telegram_channels, parsed_q, news_queue))))
     # parsers.append(asyncio.create_task(fetch_news(bcs_parser, (parsed_q, news_queue))))
     for source, (rss_link, rss_text_xpath) in rss_channels.items():
         parsers.append(
