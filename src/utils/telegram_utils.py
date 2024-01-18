@@ -20,8 +20,8 @@ class Storage():
     def __init__(self):
         # host = os.getenv('REDIS_HOST')
         # port = os.getenv('REDIS_PORT')
-        # pwd = os.getenv('REDIS_PASSWORD')
-        self.redis_client = Redis(host='0.0.0.0', port=6379, db=0)
+        pwd = os.getenv('DB_PASSWORD')
+        self.redis_client = Redis(host='redis', password=pwd)
         logger.info('Redis client initialized')
         clients = self.get_clients()
         if len(clients) == 0:

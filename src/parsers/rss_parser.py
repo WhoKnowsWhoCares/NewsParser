@@ -11,13 +11,15 @@ from langdetect import detect
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.luhn import LuhnSummarizer
-summarizer = LuhnSummarizer()
-import nltk
+# import nltk
 # nltk.download('punkt')
 
 from src.utils.utils import random_user_agent_headers
 
-async def get_text(link:str, rss_text_xpath: str):
+summarizer = LuhnSummarizer()
+
+
+async def get_text(link: str, rss_text_xpath: str):
     try:
         header = random_user_agent_headers()
         async with ClientSession(trust_env=True) as session:
@@ -26,25 +28,26 @@ async def get_text(link:str, rss_text_xpath: str):
                 selector = Selector(text=response_text)
                 text = [row.extract().strip() for row in selector.xpath(rss_text_xpath)]
                 text = '\n'.join(filter(None, text))
-                logger.debug(f'Text parsed for link {link}')
+                logger.debug(f'Text parsed for link {link}: {text}')
                 return text
     except ClientError as e:
         logger.error(f'HTTP Request failed: {e}')
     except Exception as e:
         logger.error(f'rss error parsing text of {link}: {e}')
     return ''
-    
 
 
-async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
-                     parsed_q:deque, queue,
-                     timeout:int = 5, check_pattern_func = None):
+async def rss_parser(source: str,
+                     rss_link: str,
+                     rss_text_xpath: str,
+                     parsed_q: deque, queue,
+                     timeout: int = 5):
     '''Парсер rss ленты'''
     while True:
         try:
             header = random_user_agent_headers()
             async with ClientSession(trust_env=True) as session:
-                async with session.get(rss_link,params=header) as response:
+                async with session.get(rss_link, params=header) as response:
                     response_text = await response.text()
                     feed = feedparser.parse(response_text)
         except Exception as e:
@@ -67,11 +70,11 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
             if text == '':
                 if rss_text_xpath and rss_text_xpath != '':
                     text = await get_text(link, rss_text_xpath)
-            if not (check_pattern_func is None):
-                news_text = f'{title}\n{summary}\n{text}'
-                if not check_pattern_func(news_text):
-                    logger.debug('Filtered by parser')
-                    continue
+            # if not (check_pattern_func is None):
+            #     news_text = f'{title}\n{summary}\n{text}'
+            #     if not check_pattern_func(news_text):
+            #         logger.debug('Filtered by parser')
+            #         continue
             if summary == '' and text != '':
                 lang = detect(text)
                 if lang == 'en':
@@ -80,17 +83,24 @@ async def rss_parser(source:str, rss_link:str, rss_text_xpath: str,
                 elif lang == 'ru':
                     lang = 'russian'
                     logger.debug('RU text')
-                parser = PlaintextParser.from_string(text,Tokenizer(lang))
+                parser = PlaintextParser.from_string(text, Tokenizer(lang))
                 summ = summarizer(parser.document, 1)
                 summary = '\n'.join([str(sentence) for sentence in summ])
             today = datetime.today().strftime('%Y-%m-%d')
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            post = {'source':source, 'title':title, 'summary':summary, 'text':text,
-                    'link':link, 'publish_dt':today, 'parsing_dttm':now}
+            post = {
+                'source': source,
+                'title': title,
+                'summary': summary,
+                'text': text,
+                'link': link,
+                'publish_dt': today,
+                'parsing_dttm': now,
+            }
 
             parsed_q.appendleft(link)
             await queue.put(post)
-            
+
             logger.debug(f'Recieved rss post {source} - {title}')
 
         await asyncio.sleep(timeout - random.uniform(0, 0.5))
