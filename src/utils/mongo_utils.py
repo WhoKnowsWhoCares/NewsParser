@@ -11,9 +11,10 @@ def get_db_connection():
     pwd = os.getenv('DB_PASSWORD')
     logger.debug(f'Connecting to MongoDB: {mongo_uri}')
     # client = MongoClient(f'mongodb://{login}:{pwd}@{mongo_uri}/')
-    client = MongoClient('mongodb://localhost:27017')
+    client = MongoClient('mongodb')
+    logger.info('News db initialized')
     return client
-    
+
 
 def insert_record_into_db(client, record_data):
     logger.debug('Inserting record into MongoDB')
@@ -24,13 +25,13 @@ def insert_record_into_db(client, record_data):
     if existing_record:
         logger.error("Record with this link already exists.")
         return False
-    
+
     # Insert the record if the key does not exist
     collection.insert_one(record_data)
     logger.debug(f"Record inserted successfully. Title: {record_data['title']}")
     return True
-    
-    
+
+
 def get_history(connection, amount_messages=50):
     '''Забирает из канала уже опубликованные посты для того, чтобы их не дублировать'''
     db = connection['news']
@@ -38,6 +39,6 @@ def get_history(connection, amount_messages=50):
     history = []
     messages = collection.find().sort('parsing_dttm', -1).limit(amount_messages)
     for message in messages:
-        link = message.get('link','')
+        link = message.get('link', '')
         history.append(link)
     return history

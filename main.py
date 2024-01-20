@@ -73,9 +73,15 @@ async def process_news(db_connection, news_queue, tg_queue):
     try:
         while True:
             news = await news_queue.get()
-            # result = insert_record_into_db(db_connection, news)
-            # if result:
-            await tg_queue.put(news)
+            if db_connection:
+                result = insert_record_into_db(db_connection, news)
+                if result:
+                    await tg_queue.put(news)
+                else:
+                    logger.warning('Cannot add record to DB')
+            else:
+                logger.warning('MongoDB not connected')
+                await tg_queue.put(news)
             news_queue.task_done()
     except Exception as e:
         logger.error(f'Error while processing news \n{e}')
@@ -85,8 +91,8 @@ async def main():
     news_queue = asyncio.Queue(maxsize=amount_messages)
     tg_queue = asyncio.Queue(maxsize=amount_messages)
     parsed_q = deque(maxlen=10*amount_messages)
-    connection = None
-    # connection = get_db_connection()
+    # connection = None
+    connection = get_db_connection()
     # parsed_q.extend(get_history(connection, amount_messages=10*amount_messages))
 
     logger.info("Start to run parsers...")

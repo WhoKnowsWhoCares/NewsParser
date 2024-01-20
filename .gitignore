@@ -89,6 +89,8 @@ target/
 *.png
 packages/
 mongo-config.js
+redis_data/
+mongo_data/
 
 # RAR files
 *.rar

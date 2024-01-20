@@ -11,10 +11,11 @@ from langdetect import detect
 from sumy.parsers.plaintext import PlaintextParser
 from sumy.nlp.tokenizers import Tokenizer
 from sumy.summarizers.luhn import LuhnSummarizer
-# import nltk
-# nltk.download('punkt')
 
 from src.utils.utils import random_user_agent_headers
+
+import nltk
+nltk.download('punkt')
 
 summarizer = LuhnSummarizer()
 
