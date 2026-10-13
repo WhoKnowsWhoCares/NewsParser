@@ -111,4 +111,3 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - [ ] Калибровка порога дедупликации на реальных данных
 
 Документация и планы: Obsidian, `AINotes/Documentation/NewsParser/`.
-Базой для проекта послужил [simple_news_aggregator](https://github.com/cdies/simple_news_aggregator).
