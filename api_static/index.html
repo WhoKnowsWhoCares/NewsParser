@@ -8,6 +8,7 @@
     :root {
       --bg: #0f1420; --card: #1a2233; --text: #e6e9f0; --muted: #8b93a7;
       --accent: #4f8cff; --border: #2a3450;
+      --ok: #5fd39a; --warn: #ffb454; --bad: #ff7b7b; --grid: #232c44;
     }
     * { box-sizing: border-box; }
     body {
@@ -17,6 +18,7 @@
     header { max-width: 780px; margin: 0 auto 20px; display: flex;
              justify-content: space-between; align-items: baseline; }
     h1 { font-size: 1.4rem; margin: 0; }
+    h2 { font-size: 1.1rem; margin: 0 0 10px; }
     .updated { color: var(--muted); font-size: 0.85rem; }
     main { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
     .event {
@@ -44,6 +46,22 @@
     #sources-table a { color: var(--accent); text-decoration: none; }
     .badge { display: inline-block; border: 1px solid var(--border); border-radius: 6px;
       padding: 0 6px; font-size: 0.75rem; color: var(--muted); }
+
+    /* metrics dashboard */
+    details.metrics-panel { max-width: 780px; margin: 0 auto 20px;
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px; }
+    details.metrics-panel summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+    .chart-card { background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 12px 6px; }
+    .chart-card h3 { margin: 0 0 4px; font-size: 0.85rem; font-weight: normal; color: var(--muted); }
+    .chart-card svg { width: 100%; height: auto; display: block; }
+    .chart-card .hint { font-size: 0.72rem; color: var(--muted); margin: 2px 0 4px; }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.7rem;
+      color: var(--muted); margin-top: 2px; }
+    .legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+      margin-right: 4px; vertical-align: baseline; }
+    @media (max-width: 640px) { .charts { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -51,6 +69,10 @@
     <h1>Новости: финансы и экономика</h1>
     <span class="updated" id="updated"></span>
   </header>
+  <details class="metrics-panel" id="metrics-panel">
+    <summary>Метрики за последний час (5-минутные интервалы)</summary>
+    <div class="charts" id="charts"><div class="meta">Загрузка…</div></div>
+  </details>
   <details class="sources-panel">
     <summary>Источники (<span id="sources-count">…</span>)</summary>
     <table id="sources-table">
@@ -121,10 +143,173 @@
       }
     }
 
+    // ---------- metrics dashboard ----------
+
+    // draw one bar/line chart into a fixed-viewBox svg; returns svg markup
+    function drawChart({bars, lines, thresholds, title, hint, format, maxOverride}) {
+      // bars: [{color, values:[num|null]}]; lines: [{color, values, dash}]
+      const W = 340, H = 130, padL = 34, padR = 8, padT = 10, padB = 18;
+      const n = (bars[0]?.values || lines[0]?.values || []).length || 1;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+
+      const allNums = [
+        ...(bars || []).flatMap(b => b.values.filter(v => v != null)),
+        ...(lines || []).flatMap(l => l.values.filter(v => v != null)),
+        ...(thresholds || []).map(t => t.value),
+      ];
+      let maxV = maxOverride ?? Math.max(1, ...allNums);
+      if (maxOverride == null) {
+        // round up to a nice step
+        const mag = Math.pow(10, Math.floor(Math.log10(maxV)));
+        const steps = [1, 2, 5, 10];
+        maxV = steps.find(s => s * mag >= maxV) * mag;
+      }
+      const x = i => padL + (i + 0.5) * (plotW / n);
+      const y = v => padT + plotH - (Math.min(v, maxV) / maxV) * plotH;
+      const bw = Math.max(3, (plotW / n) * 0.62);
+
+      let g = '';
+      // horizontal grid: 4 lines + y labels
+      for (let k = 0; k <= 4; k++) {
+        const val = maxV * k / 4, yy = y(val);
+        g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"
+               stroke="var(--grid)" stroke-width="1"/>`;
+        g += `<text x="${padL - 4}" y="${yy + 3}" text-anchor="end"
+               font-size="7.5" fill="var(--muted)">${format(val)}</text>`;
+      }
+      // bars
+      (bars || []).forEach((b, bi) => {
+        const off = (bi - ((bars.length - 1) / 2)) * (bw / bars.length);
+        b.values.forEach((v, i) => {
+          if (v == null || v <= 0) return;
+          const yy = y(v);
+          g += `<rect x="${x(i) + off - bw / bars.length}" y="${yy}"
+                 width="${bw / bars.length}" height="${padT + plotH - yy}"
+                 fill="${b.color}" rx="1"/>`;
+        });
+      });
+      // threshold lines
+      (thresholds || []).forEach(t => {
+        const yy = y(t.value);
+        g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"
+               stroke="${t.color || 'var(--bad)'}" stroke-width="1" stroke-dasharray="4 3"/>`;
+        g += `<text x="${W - padR}" y="${yy - 3}" text-anchor="end" font-size="7"
+               fill="${t.color || 'var(--bad)'}">${escapeHtml(t.label || ('порог ' + format(t.value)))}</text>`;
+      });
+      // lines
+      (lines || []).forEach(l => {
+        const pts = l.values.map((v, i) => v == null ? null : `${x(i)},${y(v)}`)
+          .filter(Boolean);
+        if (pts.length) {
+          g += `<polyline points="${pts.join(' ')}" fill="none"
+                 stroke="${l.color}" stroke-width="1.8"${l.dash ? ' stroke-dasharray="4 3"' : ''}/>`;
+        }
+        // dots on data points
+        l.values.forEach((v, i) => {
+          if (v == null) return;
+          g += `<circle cx="${x(i)}" cy="${y(v)}" r="2" fill="${l.color}"/>`;
+        });
+      });
+      // x labels: hour marks only
+      return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        ${g}
+        <text x="${padL}" y="${H - 5}" font-size="7.5" fill="var(--muted)">-1ч</text>
+        <text x="${W - padR}" y="${H - 5}" text-anchor="end" font-size="7.5" fill="var(--muted)">сейчас</text>
+      </svg>`;
+    }
+
+    const C = {ok: 'var(--ok)', accent: 'var(--accent)', warn: 'var(--warn)',
+               bad: 'var(--bad)', muted: 'var(--muted)'};
+
+    function chartCard(title, svg, legend, hint) {
+      return `<div class="chart-card"><h3>${escapeHtml(title)}</h3>
+        ${hint ? `<div class="hint">${escapeHtml(hint)}</div>` : ''}
+        ${svg}
+        <div class="legend">${legend.map(l =>
+          `<span><span class="sw" style="background:${l.color}"></span>${escapeHtml(l.label)}</span>`
+        ).join('')}</div>
+      </div>`;
+    }
+
+    const intFmt = v => Math.round(v).toString();
+    const secFmt = v => v >= 60 ? Math.round(v / 60) + 'м' : Math.round(v) + 'с';
+
+    function renderCharts(data) {
+      const s = data.series, th = data.thresholds;
+      const cards = [];
+
+      // 1. pipeline: processed + failed + dedup
+      const svg1 = drawChart({
+        bars: [
+          {color: C.ok, values: s.processed_ok},
+          {color: C.warn, values: s.processed_stale},
+        ],
+        lines: [{color: C.accent, values: s.dedup_matches}],
+        thresholds: [{value: th.items_failed, color: C.bad, label: 'порог failed=0'}],
+        format: intFmt,
+      });
+      cards.push(chartCard('Обработка новостей (шт/5м)', svg1, [
+        {color: C.ok, label: 'обработано'}, {color: C.warn, label: 'без эмбеддинга'},
+        {color: C.accent, label: 'дедуп-матчи'},
+      ], 'растущий failed = системная проблема'));
+
+      // 2. freshness line chart
+      const svg2 = drawChart({
+        bars: [],
+        lines: [{color: C.accent, values: s.freshness_seconds}],
+        thresholds: [{value: th.freshness_seconds, color: C.bad, label: 'порог 10м'}],
+        format: secFmt,
+      });
+      cards.push(chartCard('Freshness: публикация → событие (сек)', svg2, [
+        {color: C.accent, label: 'среднее время'},
+      ], 'пунктир — порог; разрыв = нет данных за интервал'));
+
+      // 3. queue + stale
+      const svg3 = drawChart({
+        bars: [{color: C.accent, values: s.queue_length}],
+        lines: [{color: C.warn, values: s.stale_embeddings, dash: false}],
+        thresholds: [{value: th.stale_embeddings, color: C.bad, label: 'порог stale=1'}],
+        format: intFmt,
+      });
+      cards.push(chartCard('Очередь и хвост backfill', svg3, [
+        {color: C.accent, label: 'queue_length'}, {color: C.warn, label: 'stale_embeddings'},
+      ], 'stale > 0 = embedder недоступен'));
+
+      // 4. pushed by parser (stacked-ish grouped bars)
+      const svg4 = drawChart({
+        bars: [
+          {color: C.ok, values: s.pushed.rss},
+          {color: C.accent, values: s.pushed.telegram},
+          {color: C.warn, values: s.pushed.site},
+        ],
+        lines: [],
+        format: intFmt,
+      });
+      cards.push(chartCard('Собрано парсерами (шт/5м)', svg4, [
+        {color: C.ok, label: 'rss'}, {color: C.accent, label: 'telegram'},
+        {color: C.warn, label: 'site'},
+      ], 'нулевой поток при живом сервисе = источник отвалился'));
+
+      document.getElementById('charts').innerHTML = cards.join('');
+    }
+
+    async function loadMetrics() {
+      try {
+        const resp = await fetch('/api/metrics-history');
+        if (!resp.ok) throw new Error(resp.status);
+        renderCharts(await resp.json());
+      } catch (err) {
+        document.getElementById('charts').innerHTML =
+          '<div class="meta">Метрики недоступны</div>';
+      }
+    }
+
     load();
     loadSources();
+    loadMetrics();
     setInterval(load, 30000);
     setInterval(loadSources, 60000);
+    setInterval(loadMetrics, 60000);  // раз в минуту достаточно: бакеты по 5м
   </script>
 </body>
 </html>

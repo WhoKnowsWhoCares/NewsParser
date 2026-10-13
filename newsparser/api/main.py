@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from prometheus_client import make_asgi_app
 
+from newsparser.api.metrics_history import router as metrics_history_router
 from newsparser.config import get_settings
 from newsparser.db import Database
 from newsparser.log_setup import setup_logging
@@ -59,6 +60,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="NewsParser API", lifespan=lifespan)
 # Prometheus exposition: /metrics serves all app metrics (prometheus_client ASGI)
 app.mount("/metrics", make_asgi_app())
+# dashboard time series for the web-page charts
+app.include_router(metrics_history_router)
 db: Database = None  # type: ignore[assignment]
 redis_client = None
 
