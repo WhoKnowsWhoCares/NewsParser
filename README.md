@@ -1,113 +1,115 @@
-# NewsParser — агрегатор финансовых новостей
+# NewsParser — financial news aggregator
 
 Сбор новостей из RSS, сайтов и Telegram-каналов → очередь (Redis Streams) →
 обработка: дедупликация событий через pgvector + LLM-суммаризация →
 выдача через веб-страницу, REST API и Telegram-бота.
 
-## Архитектура (docker-compose сервисы)
+**English** | [Русский](README.ru.md)
 
-| Сервис | Что делает | Внешние порты |
+## Architecture (docker-compose services)
+
+| Service | What it does | External ports |
 |---|---|---|
-| `newsparser-collector` | RSS (РИА), парсинг сайта (BCS Express), Telegram-каналы (Telethon, user API). Кладут сырые новости в Redis Stream `news:raw`. Экспоненциальный backoff при ошибках источника | нет |
-| `newsparser-processor` | Берёт новости из потока (consumer group): дедуп по link → эмбеддинг → поиск ближайшего события в pgvector → новое событие (LLM-сводка) или обновление существующего (LLM вплетает детали) → кеш в Redis. Graceful degradation: если embedder недоступен, новость сохраняется с `embedding_stale` и досчитывается позже (backfill) | нет |
-| `newsparser-api` | FastAPI: `/api/events`, `/api/events/{id}`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс на `/` | **8003** (единственный) |
-| `newsparser-tgbot` | Рассылка событий подписчикам, редактирование сообщения при обновлении события, сбор лайков | нет |
-| `newsparser-postgres` | pgvector/pgvector:pg17 — события, новости, реакции, векторный поиск (HNSW, cosine) | нет |
-| `newsparser-redis` | Очередь `news:raw` (Streams, авто-trim) + кеш последних событий `events:latest` | нет |
+| `newsparser-collector` | RSS (RIA), site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors | none |
+| `newsparser-processor` | Consumes the stream (consumer group): link dedup → embed → nearest-event lookup in pgvector → new event (LLM summary) or update of an existing one (LLM merges details) → redis cache. Graceful degradation: when the embedder is down, items are saved with `embedding_stale` and backfilled later | none |
+| `newsparser-api` | FastAPI: `/api/events`, `/api/events/{id}`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI on `/` | **8003** (the only one) |
+| `newsparser-tgbot` | Event delivery to subscribers, message editing on event updates, likes | none |
+| `newsparser-postgres` | pgvector/pgvector:pg17 — events, news items, reactions, vector search (HNSW, cosine) | none |
+| `newsparser-redis` | `news:raw` queue (Streams, auto-trim) + latest-events cache `events:latest` | none |
 
-Наружу открыт только API/веб (`API_PORT`, по умолчанию 8003); postgres, redis и
-все воркеры общаются внутри docker-сети compose.
+Only the API/web is exposed (`API_PORT`, default 8003); postgres, redis and all
+workers communicate inside the compose docker network.
 
-Поток: `источник → news:raw → processor → postgres (events) + redis cache → {web, api, bot}`
+Pipeline: `source → news:raw → processor → postgres (events) + redis cache → {web, api, bot}`
 
-### Надёжность
+### Reliability
 
-- **Очередь**: cap `QUEUE_MAX_LENGTH` на стороне парсеров (переполнение → drop с логом); `STREAM_MAX_LEN` — ретенция стрима (XTRIM).
-- **Ретенция БД**: `DB_RETENTION_DAYS` — процессор раз в сутки удаляет старые новости и события-сироты.
-- **LLM fallback**: chat — локальный endpoint → OpenRouter (через прокси); embedding — только локальный (векторы разных моделей несравнимы, fallback намеренно отсутствует). При недоступности embedder'а новости копятся в pending и обрабатываются после восстановления.
-- **Healthchecks**: API — `/healthz` (реальные проверки postgres/redis); processor и collector — heartbeat-файл (stale mtime → restart).
-- **Метрики**: Prometheus. API — `:8003/metrics`, воркеры — внутренние :9101/:9102. Счётчики обработки, дедупа, латентность LLM, глубина очереди.
-- **Логи**: `LOG_FORMAT=json` — структурированные JSON-логи (prod), по умолчанию текстовые (dev). Ротация daily, retention 30 дней.
-- **Backoff**: парсеры удваивают интервал опроса при ошибках источника (до ×16).
+- **Queue**: `QUEUE_MAX_LENGTH` cap enforced at the parsers (overflow → drop with a log); `STREAM_MAX_LEN` — stream retention (XTRIM).
+- **DB retention**: `DB_RETENTION_DAYS` — the processor daily prunes old news items and orphaned events.
+- **LLM fallback**: chat — local endpoint → OpenRouter (via proxy); embeddings — local only (vectors from different models are not comparable, fallback is intentionally absent). While the embedder is down, items accumulate in pending and are processed after recovery.
+- **Healthchecks**: API — `/healthz` (real postgres/redis checks); processor and collector — heartbeat file (stale mtime → restart).
+- **Metrics**: Prometheus. API — `:8003/metrics`, workers — internal :9101/:9102. Processing/dedup counters, LLM latency, queue depth.
+- **Logs**: `LOG_FORMAT=json` — structured JSON logs (prod), plain text by default (dev). Daily rotation, 30-day retention.
+- **Backoff**: parsers double the poll interval on source errors (up to ×16).
 
-## Быстрый старт
+## Quick start
 
 ```bash
-cp .env_template .env          # заполнить api_id/api_hash, bot_token
+cp .env_template .env          # fill in api_id/api_hash, bot_token
 docker compose -f docker/docker-compose.yml up -d --build
-# веб: http://localhost:8003
+# web: http://localhost:8003
 ```
 
-При первом старте postgres создаёт схему (`docker/db/init/01_schema.sh`).
-Размерность эмбеддингов задаётся `EMBED_DIM` и должна совпадать с моделью
-эмбеддингов; при смене модели нужно пересоздать volume `pgdata`.
+Postgres creates the schema on first start (`docker/db/init/01_schema.sh`).
+The embedding dimension is set by `EMBED_DIM` and must match the embedding
+model; when changing models, recreate the `pgdata` volume.
 
-### Первый запуск Telegram-парсера
+### First run of the Telegram parser
 
-Telethon при первом запуске просит логин/код интерактивно. Утилита логина
-печатает и файловую сессию, и готовую строку `TELETHON_SESSION` для прода:
+Telethon asks for login/code interactively on first start. The login utility
+prints both the file session and a ready `TELETHON_SESSION` string for prod:
 
 ```bash
 uv sync
 uv run python -m newsparser.tools.tg_login
 ```
 
-Авторизация на проде — переменная `TELETHON_SESSION` (StringSession из env,
-попадает в секрет-менеджмент); если она пуста, используется файл
-`newsparser.session` (пробрасывается в контейнер volume'ом). Прокси для
-Telegram и OpenRouter — `TG_PROXY_URL` (socks5/http).
+Production auth — the `TELETHON_SESSION` variable (StringSession from env,
+fits secret management); when empty, the `newsparser.session` file is used
+(mounted into the container). Proxy for Telegram and OpenRouter —
+`TG_PROXY_URL` (socks5/http).
 
-## Локальная разработка
+## Local development
 
-Проект использует [uv](https://docs.astral.sh/uv/) (Python 3.13, см. `.python-version`):
+The project uses [uv](https://docs.astral.sh/uv/) (Python 3.13, see `.python-version`):
 
 ```bash
-uv sync                        # создать .venv и установить зависимости
+uv sync                        # create .venv and install dependencies
 uv run ruff check newsparser tests
-# тесты (нужны запущенные postgres+redis на :5434/:6380):
-uv run python tests/test_processor_e2e.py       # дедуп/слияние/кеш/реакции
-uv run python tests/test_stale_backfill_e2e.py  # деградация embedder + backfill
+# tests (require postgres+redis running on :5434/:6380):
+uv run python tests/test_processor_e2e.py       # dedup/merge/cache/reactions
+uv run python tests/test_stale_backfill_e2e.py  # embedder degradation + backfill
 uv run python tests/test_api_smoke.py           # API
 ```
 
-CI (`.github/workflows/ci.yml`): ruff + те же тесты на свежих
-postgres/redis-контейнерах со схемой из шаблона (`EMBED_DIM=8`).
+CI (`.github/workflows/ci.yml`): ruff + the same tests on fresh
+postgres/redis containers with the schema from the template (`EMBED_DIM=8`).
 
-## Конфигурация
+## Configuration
 
-Все параметры — в `.env` (см. `.env_template`). Ключевые:
+All parameters live in `.env` (see `.env_template`). Key ones:
 
-- `DEDUP_THRESHOLD` — порог косинусной близости для склейки событий (по умолчанию 0.85);
-- `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL` — OpenAI-совместимые endpoints (локальные модели);
-- `OPENROUTER_API_KEY` — ключ fallback для chat-модели (embeddings без fallback);
-- `QUEUE_MAX_LENGTH` — cap очереди на парсерах (0 = без лимита, прод);
-- `STREAM_MAX_LEN` / `DB_RETENTION_DAYS` — ретенция стрима и БД;
-- `POLL_INTERVAL` — период опроса источников, сек;
-- `TG_PROXY_URL` — socks5/http прокси (Telegram API + OpenRouter); пусто → напрямую;
-- `TELETHON_SESSION` — StringSession для прода (пусто → файл `newsparser.session`);
-- `LOG_FORMAT=json` — структурированные логи;
-- `METRICS_PORT` — порт /metrics воркеров.
+- `DEDUP_THRESHOLD` — cosine similarity threshold for merging events (default 0.85);
+- `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL` — OpenAI-compatible endpoints (local models);
+- `OPENROUTER_API_KEY` — fallback key for the chat model (embeddings have no fallback);
+- `QUEUE_MAX_LENGTH` — queue cap at the parsers (0 = unlimited, production);
+- `STREAM_MAX_LEN` / `DB_RETENTION_DAYS` — stream and DB retention;
+- `POLL_INTERVAL` — source poll interval, seconds;
+- `TG_PROXY_URL` — socks5/http proxy (Telegram API + OpenRouter); empty → direct;
+- `TELETHON_SESSION` — StringSession for prod (empty → `newsparser.session` file);
+- `LOG_FORMAT=json` — structured logs;
+- `METRICS_PORT` — worker /metrics port.
 
-## Источники (текущие)
+## Sources (current)
 
-- RSS: [РИА Новости](https://ria.ru/export/rss2/archive/index.xml)
-- Сайт: [BCS Express](https://bcs-express.ru)
+- RSS: [RIA Novosti](https://ria.ru/export/rss2/archive/index.xml)
+- Site: [BCS Express](https://bcs-express.ru)
 - Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express
 
-Добавление нового источника — модуль в `newsparser/parsers/` + запись в
+Adding a new source — a module in `newsparser/parsers/` + a record in
 `newsparser/parsers/main.py`.
 
-## Дорожная карта
+## Roadmap
 
-- [x] Рефакторинг: Mongo→Postgres+pgvector, pyrogram→Telethon, sumy→LLM
-- [x] Дедупликация событий через векторный поиск
-- [x] Веб-страница + API + бот с обновлением сообщений и лайками
-- [x] LLM: локальный endpoint (chat + embeddings) с fallback на OpenRouter для chat
-- [x] Graceful degradation эмбеддингов + backfill
-- [x] Ретенция очереди и БД, healthchecks, Prometheus-метрики, JSON-логи
-- [ ] Новые источники (RU/EN финансы)
-- [ ] Поиск по схожим новостям (RAG) на базе накопленных эмбеддингов
-- [ ] Категоризация событий (фильтры в UI, адресные подписки бота)
-- [ ] Калибровка порога дедупликации на реальных данных
+- [x] Rewrite: Mongo→Postgres+pgvector, pyrogram→Telethon, sumy→LLM
+- [x] Event deduplication via vector search
+- [x] Web page + API + bot with message updates and likes
+- [x] LLM: local endpoint (chat + embeddings) with OpenRouter chat fallback
+- [x] Graceful embedding degradation + backfill
+- [x] Queue/DB retention, healthchecks, Prometheus metrics, JSON logs
+- [ ] New sources (RU/EN finance)
+- [ ] Similar-news search (RAG) on the accumulated embeddings
+- [ ] Event categorization (UI filters, targeted bot subscriptions)
+- [ ] Dedup threshold calibration on real data
 
-Документация и планы: Obsidian, `AINotes/Documentation/NewsParser/`.
+Documentation and plans: Obsidian, `AINotes/Documentation/NewsParser/`.
