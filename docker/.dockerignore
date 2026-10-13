@@ -3,10 +3,10 @@
 **/.vscode
 **/coverage
 **/.venv
+**/.venv312
 **/.aws
 **/.ssh
 Dockerfile
-README.md
 docker-compose.yml
 **/.DS_Store
 **/venv
@@ -14,3 +14,10 @@ docker-compose.yml
 **/__pycache__
 redis_data
 mongo_data
+logs
+notebooks
+tests
+.env
+.env.example.local
+*.session
+*.session-journal

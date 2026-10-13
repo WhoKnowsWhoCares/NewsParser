@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  TEST_DB_HOST: localhost
+  TEST_DB_PORT: 5434
+  TEST_DB_NAME: newsparser_test
+  TEST_DB_USER: newsparser
+  TEST_DB_PASSWORD: newsparser
+  TEST_REDIS_HOST: localhost
+  TEST_REDIS_PORT: 6380
+  EMBED_DIM: "8"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: newsparser_test
+          POSTGRES_USER: newsparser
+          POSTGRES_PASSWORD: newsparser
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U newsparser -d newsparser_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        run: uv run ruff check newsparser tests
+
+      # service containers cannot mount volumes, apply the shared templated
+      # schema via a sibling pgvector container on the host network
+      - name: Apply DB schema
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=newsparser \
+            -v "${{ github.workspace }}/docker/db/init:/init:ro" \
+            pgvector/pgvector:pg17 \
+            sh -c 'sed "s/{EMBED_DIM}/8/g" /init/schema.sql.template | psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U newsparser -d newsparser_test'
+
+      - name: Run e2e processor test
+        run: uv run python tests/test_processor_e2e.py
+
+      - name: Run stale-backfill e2e test
+        run: uv run python tests/test_stale_backfill_e2e.py
+
+      - name: Run API smoke test
+        run: uv run python tests/test_api_smoke.py

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewsParser — финансовые новости</title>
+  <style>
+    :root {
+      --bg: #0f1420; --card: #1a2233; --text: #e6e9f0; --muted: #8b93a7;
+      --accent: #4f8cff; --border: #2a3450;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5;
+    }
+    header { max-width: 780px; margin: 0 auto 20px; display: flex;
+             justify-content: space-between; align-items: baseline; }
+    h1 { font-size: 1.4rem; margin: 0; }
+    .updated { color: var(--muted); font-size: 0.85rem; }
+    main { max-width: 780px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+    .event {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .event .summary { margin: 6px 0 10px; }
+    .meta { color: var(--muted); font-size: 0.82rem; display: flex; gap: 12px; flex-wrap: wrap; }
+    .sources { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+    .sources a {
+      color: var(--accent); text-decoration: none; font-size: 0.82rem;
+      border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
+    }
+    .sources a:hover { background: var(--border); }
+    .sources a.broken { color: var(--muted); border-style: dashed; }
+    .empty { color: var(--muted); text-align: center; padding: 40px 0; }
+    .err { color: #ff7b7b; text-align: center; padding: 40px 0; }
+    details.sources-panel { max-width: 780px; margin: 0 auto 20px;
+      border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px; }
+    details.sources-panel summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+    #sources-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
+    #sources-table td, #sources-table th { padding: 6px 8px; text-align: left;
+      border-bottom: 1px solid var(--border); }
+    #sources-table th { color: var(--muted); font-weight: normal; }
+    #sources-table a { color: var(--accent); text-decoration: none; }
+    .badge { display: inline-block; border: 1px solid var(--border); border-radius: 6px;
+      padding: 0 6px; font-size: 0.75rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Новости: финансы и экономика</h1>
+    <span class="updated" id="updated"></span>
+  </header>
+  <details class="sources-panel">
+    <summary>Источники (<span id="sources-count">…</span>)</summary>
+    <table id="sources-table">
+      <thead><tr><th>Тип</th><th>Источник</th><th>Новостей</th><th>Последний сбор</th></tr></thead>
+      <tbody id="sources-body"><tr><td colspan="4">Загрузка…</td></tr></tbody>
+    </table>
+  </details>
+  <main id="feed"><div class="empty">Загрузка…</div></main>
+  <script>
+    const feed = document.getElementById('feed');
+    const updated = document.getElementById('updated');
+
+    function escapeHtml(s) {
+      return (s ?? '').toString()
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    function renderEvent(e) {
+      const sources = (e.items || []).filter(it => it.link).map(it => {
+        const ok = /^https?:\/\//i.test(it.link);
+        const cls = ok ? '' : ' broken';
+        const label = it.source || (ok ? new URL(it.link).hostname : 'источник');
+        if (!ok) return `<span class="sources"><span class="sources"><a class="broken" title="битая ссылка">${escapeHtml(label)}</a></span></span>`;
+        return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+      }).join('');
+      const when = e.updated_at ? new Date(e.updated_at).toLocaleString('ru-RU') : '';
+      return `<article class="event">
+        <div class="meta"><span>${when}</span><span>источников: ${e.sources_count ?? 1}</span></div>
+        <div class="summary">${escapeHtml(e.summary)}</div>
+        <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}</div>
+      </article>`;
+    }
+
+    const TYPE_LABELS = {rss: 'RSS', site: 'Сайт', telegram: 'Telegram'};
+
+    async function loadSources() {
+      try {
+        const resp = await fetch('/api/sources');
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        document.getElementById('sources-count').textContent = data.sources.length;
+        document.getElementById('sources-body').innerHTML = data.sources.map(s => {
+          const last = s.last_parsed ? new Date(s.last_parsed).toLocaleString('ru-RU') : '—';
+          return `<tr>
+            <td><span class="badge">${TYPE_LABELS[s.source_type] || escapeHtml(s.source_type)}</span></td>
+            <td><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.source)}</a></td>
+            <td>${s.items ?? 0}</td>
+            <td>${last}</td>
+          </tr>`;
+        }).join('');
+      } catch (err) {
+        document.getElementById('sources-body').innerHTML =
+          '<tr><td colspan="4" class="err">Не удалось загрузить источники</td></tr>';
+      }
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch('/api/events?limit=30');
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        updated.textContent = 'обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+        feed.innerHTML = data.events.length
+          ? data.events.map(renderEvent).join('')
+          : '<div class="empty">Пока нет новостей</div>';
+      } catch (err) {
+        feed.innerHTML = '<div class="err">Не удалось загрузить новости</div>';
+      }
+    }
+
+    load();
+    loadSources();
+    setInterval(load, 30000);
+    setInterval(loadSources, 60000);
+  </script>
+</body>
+</html>

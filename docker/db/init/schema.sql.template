@@ -1,0 +1,49 @@
+-- NewsParser schema (Postgres + pgvector).
+-- Embedding dimension is templated: EMBED_DIM (default 768) must match the
+-- embeddings model AND the EMBED_DIM env of the app.
+-- Local compose applies it via 01_schema.sh; CI pipes this file into psql
+-- with EMBED_DIM=8 (mock embedder in tests).
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS events (
+    id            BIGSERIAL PRIMARY KEY,
+    summary       TEXT NOT NULL DEFAULT '',
+    embedding     vector({EMBED_DIM}),
+    sources_count INT NOT NULL DEFAULT 1,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    tg_message_id BIGINT
+);
+
+CREATE TABLE IF NOT EXISTS news_items (
+    id              BIGSERIAL PRIMARY KEY,
+    source_type     TEXT NOT NULL,                -- 'rss' | 'site' | 'telegram'
+    source          TEXT NOT NULL,                -- domain or channel name
+    title           TEXT NOT NULL DEFAULT '',
+    text            TEXT NOT NULL DEFAULT '',
+    summary         TEXT NOT NULL DEFAULT '',     -- summary from source (rss description etc.)
+    link            TEXT NOT NULL UNIQUE,
+    language        TEXT NOT NULL DEFAULT 'ru',
+    published_at    TIMESTAMPTZ,
+    parsed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    embedding       vector({EMBED_DIM}),          -- NULL = not computed yet
+    embedding_stale BOOLEAN NOT NULL DEFAULT false, -- true = embed failed, backfill needed
+    event_id        BIGINT REFERENCES events(id) ON DELETE SET NULL
+);
+
+-- likes from the telegram bot, for future analytics
+CREATE TABLE IF NOT EXISTS reactions (
+    id         BIGSERIAL PRIMARY KEY,
+    event_id   BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    user_id    BIGINT NOT NULL,
+    reaction   TEXT NOT NULL DEFAULT 'like',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (event_id, user_id, reaction)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_items_event ON news_items(event_id);
+CREATE INDEX IF NOT EXISTS idx_news_items_parsed_at ON news_items(parsed_at);
+CREATE INDEX IF NOT EXISTS idx_events_updated_at ON events(updated_at);
+-- vector index (cosine)
+CREATE INDEX IF NOT EXISTS idx_events_embedding ON events
+    USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
