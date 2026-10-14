@@ -135,14 +135,20 @@ class Database:
         return None
 
     async def create_event(
-        self, *, summary: str, embedding: list[float] | None
+        self,
+        *,
+        summary: str,
+        embedding: list[float] | None,
+        tags: list[str] | None = None,
     ) -> int:
         row = await self.pool.fetchrow(
             """
-            INSERT INTO events (summary, embedding) VALUES ($1, $2) RETURNING id
+            INSERT INTO events (summary, embedding, tags) VALUES ($1, $2, $3)
+            RETURNING id
             """,
             summary,
             embedding,
+            tags or [],
         )
         return row["id"]
 
@@ -150,12 +156,21 @@ class Database:
         return await self.pool.fetchrow("SELECT * FROM events WHERE id = $1", event_id)
 
     async def update_event_summary(
-        self, event_id: int, *, summary: str, embedding: list[float]
+        self,
+        event_id: int,
+        *,
+        summary: str,
+        embedding: list[float],
+        tags: list[str] | None = None,
     ) -> None:
+        """Update summary + embedding; tags merge into the existing set."""
         await self.pool.execute(
             """
             UPDATE events
-            SET summary = $2, embedding = $3,
+            SET summary = $2,
+                embedding = $3,
+                tags = (SELECT array_agg(DISTINCT t)
+                        FROM unnest(tags || $4::text[]) AS t),
                 sources_count = sources_count + 1,
                 updated_at = now()
             WHERE id = $1
@@ -163,6 +178,7 @@ class Database:
             event_id,
             summary,
             embedding,
+            tags or [],
         )
 
     async def set_tg_message(self, event_id: int, message_id: int) -> None:
@@ -248,21 +264,42 @@ class Database:
 
     # --- helpers for bootstrap / api ---
 
-    async def latest_events(self, limit: int = 30) -> list[dict[str, Any]]:
+    async def latest_events(
+        self, limit: int = 30, tag: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Latest events, optionally filtered by a tag (exact, case-insensitive)."""
+        tag_filter = (
+            "WHERE $2 = '' OR EXISTS "
+            "(SELECT 1 FROM unnest(e.tags) t WHERE lower(t) = lower($2))"
+        )
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT e.id, e.summary, e.sources_count, e.first_seen_at, e.updated_at,
-                   e.tg_message_id,
+                   e.tg_message_id, e.tags,
                    COALESCE(json_agg(json_build_object(
                         'title', n.title, 'source', n.source, 'link', n.link
                    )) FILTER (WHERE n.id IS NOT NULL), '[]') AS items
             FROM events e
             LEFT JOIN news_items n ON n.event_id = e.id
+            {tag_filter}
             GROUP BY e.id
             ORDER BY e.updated_at DESC
             LIMIT $1
             """,
             limit,
+            tag or "",
+        )
+        return [dict(r) for r in rows]
+
+    async def all_tags(self) -> list[dict[str, Any]]:
+        """Distinct tags with usage counts, most used first."""
+        rows = await self.pool.fetch(
+            """
+            SELECT t AS tag, count(*) AS n
+            FROM events, unnest(tags) AS t
+            GROUP BY t
+            ORDER BY n DESC, t
+            """
         )
         return [dict(r) for r in rows]
 

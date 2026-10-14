@@ -46,6 +46,15 @@
     #sources-table a { color: var(--accent); text-decoration: none; }
     .badge { display: inline-block; border: 1px solid var(--border); border-radius: 6px;
       padding: 0 6px; font-size: 0.75rem; color: var(--muted); }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .tag { display: inline-block; border: 1px solid var(--border); border-radius: 999px;
+      padding: 1px 9px; font-size: 0.75rem; color: var(--muted); cursor: pointer;
+      background: none; }
+    .tag.cat { color: var(--accent); border-color: var(--accent); }
+    .tag.ticker { color: var(--ok); border-color: var(--ok); font-weight: 600; }
+    .tag:hover { background: var(--border); }
+    .tag.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; }
 
     /* metrics dashboard */
     details.metrics-panel { max-width: 780px; margin: 0 auto 20px;
@@ -80,6 +89,7 @@
       <tbody id="sources-body"><tr><td colspan="4">Загрузка…</td></tr></tbody>
     </table>
   </details>
+  <div class="tag-filter" id="tag-filter"></div>
   <main id="feed"><div class="empty">Загрузка…</div></main>
   <script>
     const feed = document.getElementById('feed');
@@ -88,6 +98,20 @@
     function escapeHtml(s) {
       return (s ?? '').toString()
         .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    const TICKER_RE = /^[A-Z0-9]{2,6}$/;
+    let activeTag = '';
+
+    function tagChip(tag) {
+      const cls = TICKER_RE.test(tag) ? 'ticker' : 'cat';
+      const act = tag === activeTag ? ' active' : '';
+      return `<button class="tag ${cls}${act}" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`;
+    }
+
+    function renderTags(tags) {
+      if (!tags || !tags.length) return '';
+      return `<div class="tags">${tags.map(tagChip).join('')}</div>`;
     }
 
     function renderEvent(e) {
@@ -102,6 +126,7 @@
       return `<article class="event">
         <div class="meta"><span>${when}</span><span>источников: ${e.sources_count ?? 1}</span></div>
         <div class="summary">${escapeHtml(e.summary)}</div>
+        ${renderTags(e.tags)}
         <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}</div>
       </article>`;
     }
@@ -131,17 +156,50 @@
 
     async function load() {
       try {
-        const resp = await fetch('/api/events?limit=50');
+        const tagQ = activeTag ? `&tag=${encodeURIComponent(activeTag)}` : '';
+        const resp = await fetch('/api/events?limit=50' + tagQ);
         if (!resp.ok) throw new Error(resp.status);
         const data = await resp.json();
         updated.textContent = 'обновлено: ' + new Date().toLocaleTimeString('ru-RU');
         feed.innerHTML = data.events.length
           ? data.events.map(renderEvent).join('')
-          : '<div class="empty">Пока нет новостей</div>';
+          : '<div class="empty">Нет новостей по этому фильтру</div>';
       } catch (err) {
         feed.innerHTML = '<div class="err">Не удалось загрузить новости</div>';
       }
     }
+
+    // build filter chips from all tags, keep the active one highlighted
+    async function loadTags() {
+      const panel = document.getElementById('tag-filter');
+      try {
+        const resp = await fetch('/api/tags');
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        const chips = [];
+        if (activeTag) chips.push(`<button class="tag active" data-tag="">✕ сбросить: ${escapeHtml(activeTag)}</button>`);
+        chips.push(...data.tags.slice(0, 24).map(t => tagChip(t.tag) + ` <span class="meta">${t.n}</span>`));
+        panel.innerHTML = chips.join(' ');
+      } catch (err) {
+        panel.innerHTML = '';
+      }
+    }
+
+    document.getElementById('tag-filter').addEventListener('click', e => {
+      const btn = e.target.closest('.tag');
+      if (!btn) return;
+      activeTag = btn.dataset.tag === activeTag ? '' : btn.dataset.tag;
+      loadTags();
+      load();
+    });
+    feed.addEventListener('click', e => {
+      const btn = e.target.closest('button.tag');
+      if (!btn) return;
+      activeTag = btn.dataset.tag === activeTag ? '' : btn.dataset.tag;
+      loadTags();
+      load();
+      window.scrollTo({top: 0, behavior: 'smooth'});
+    });
 
     // ---------- metrics dashboard ----------
 
@@ -306,6 +364,7 @@
 
     load();
     loadSources();
+    loadTags();
     loadMetrics();
     setInterval(load, 30000);
     setInterval(loadSources, 60000);

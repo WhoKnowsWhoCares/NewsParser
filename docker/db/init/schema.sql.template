@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS events (
     sources_count INT NOT NULL DEFAULT 1,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    tg_message_id BIGINT
+    tg_message_id BIGINT,
+    tags          TEXT[] NOT NULL DEFAULT '{}'  -- category + tickers: 'ЦБ', 'SBER', ...
 );
 
 CREATE TABLE IF NOT EXISTS news_items (

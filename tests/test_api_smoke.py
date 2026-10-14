@@ -35,10 +35,10 @@ async def seed() -> None:
             return [1.0, 0.1, 0, 0, 0, 0, 0, 0.1]
 
         async def summarize_new_event(self, title, text):
-            return f"Сводка: {title}"
+            return f"Сводка: {title}", ["ЭКОНОМИКА"]
 
-        async def summarize_merge(self, summary, title, text):
-            return f"{summary} (обновлено)"
+        async def summarize_merge(self, summary, title, text, tags=None):
+            return f"{summary} (обновлено)", (tags or []) + ["ОБНОВЛЕНО"]
 
     settings = get_settings()
     db = Database(settings.pg_dsn)

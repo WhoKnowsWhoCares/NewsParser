@@ -5,6 +5,7 @@ Fallback: OpenRouter when local is unreachable or returns an error.
 Both endpoints must speak the OpenAI API format.
 """
 
+import json
 import time
 
 import httpx
@@ -13,18 +14,40 @@ from loguru import logger
 from newsparser.config import Settings
 from newsparser.metrics import EMBED_FAILURES, LLM_LATENCY
 
+CATEGORIES = (
+    "ЦБ (центробанк/ключевая ставка), Минфин, инфляция, банки, акции, облигации, "
+    "валюта, нефть/газ, металлы, крипто, компании, M&A, IPO, санкции, "
+    "геополитика, налоги, бюджет, недвижимость, ритейл, техно, экономика РФ, "
+    "экономика мира, статистика"
+)
+
+TAG_PROMPT_APPENDIX = (
+    "\n\nПосле сводки выдели теги и верни СТРОГО валидный JSON без markdown-обёрток:\n"
+    '{{"summary": "<сводка>", "tags": ["<тег>", ...]}}\n'
+    "Правила тегов:\n"
+    "- первый тег — одна категория из списка: {categories};\n"
+    "- если упоминается публичная компания — добавь её биржевой тикер прописными "
+    "(Сбербанк → SBER, Газпром → GAZP, Яндекс → YDEX, Лукойл → LKOH, "
+    " Норникель → GMKN, Северсталь → CHMF, Татнефть → TATN, Новатэк → NVTK, "
+    " Роснефть → ROSN, ВТБ → VTBR, Магнит → MGNT, X5 → X5, "
+    " Apple → AAPL, Microsoft → MSFT, Google/Alphabet → GOOGL, Amazon → AMZN, "
+    " Meta → META, Tesla → TSLA, NVIDIA → NVDA); не более 5 тикеров;\n"
+    "- только то, что реально упомянуто; без пояснений внутри массива."
+)
+
 SUMMARY_NEW_EVENT_PROMPT = (
     "Ты редактор финансовых новостей. Ниже новость (RU или EN). "
     "Напиши краткую сводку события на русском языке (2-3 предложения): "
-    "что произошло, ключевые цифры и факты. Без преамбул, только сводка.\n\n"
-    "Новость:\nЗаголовок: {title}\nТекст: {text}"
+    "что произошло, ключевые цифры и факты. Без преамбул, только сводка." + TAG_PROMPT_APPENDIX +
+    "\n\nНовость:\nЗаголовок: {title}\nТекст: {text}"
 )
 
 SUMMARY_MERGE_PROMPT = (
     "Ты редактор финансовых новостей. Ниже существующая сводка события и новая новость "
     "по тому же событию. Обнови сводку, вплетая новые детали и факты из новой новости. "
-    "Ответ на русском языке, 2-4 предложения, только обновлённая сводка.\n\n"
-    "Существующая сводка:\n{summary}\n\n"
+    "Ответ на русском языке, 2-4 предложения, только обновлённая сводка." + TAG_PROMPT_APPENDIX +
+    "\nДополнительно: сохрани релевантные теги существующей сводки и добавь новые.\n\n"
+    "Существующая сводка:\n{summary}\nСуществующие теги: {tags}\n\n"
     "Новая новость:\nЗаголовок: {title}\nТекст: {text}"
 )
 
@@ -174,12 +197,55 @@ class LLMClient:
             )
         return embedding
 
-    async def summarize_new_event(self, title: str, text: str) -> str:
-        if not text:
-            return title
-        return await self.chat(SUMMARY_NEW_EVENT_PROMPT.format(title=title, text=text))
+    @staticmethod
+    def _parse_summary_json(text: str) -> tuple[str, list[str]]:
+        """Extract (summary, tags) from a model reply; fall back to raw text.
 
-    async def summarize_merge(self, summary: str, title: str, text: str) -> str:
-        return await self.chat(
-            SUMMARY_MERGE_PROMPT.format(summary=summary, title=title, text=text)
+        Models sometimes wrap JSON in ```json fences or prepend chatter —
+        find the outermost {...} and parse that.
+        """
+        text = text.strip()
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            try:
+                data = json.loads(text[start:end + 1])
+                summary = str(data.get("summary", "")).strip()
+                tags_raw = data.get("tags", [])
+                if summary and isinstance(tags_raw, list):
+                    tags = [str(t).strip().upper() for t in tags_raw if str(t).strip()]
+                    # cap: 1 category + tickers
+                    return summary, list(dict.fromkeys(tags))[:6]
+            except json.JSONDecodeError:
+                pass
+        # model ignored the JSON contract: treat the whole reply as summary
+        return text, []
+
+    async def summarize_new_event(self, title: str, text: str) -> tuple[str, list[str]]:
+        """Summarize + tag a new event. Returns (summary, tags)."""
+        if not text:
+            return title, []
+        raw = await self.chat(
+            SUMMARY_NEW_EVENT_PROMPT.format(
+                title=title, text=text, categories=CATEGORIES
+            )
         )
+        return self._parse_summary_json(raw)
+
+    async def summarize_merge(
+        self, summary: str, title: str, text: str, tags: list[str] | None = None
+    ) -> tuple[str, list[str]]:
+        """Merge a new item into an existing event. Returns (summary, tags)."""
+        raw = await self.chat(
+            SUMMARY_MERGE_PROMPT.format(
+                summary=summary,
+                tags=", ".join(tags or []) or "нет",
+                title=title,
+                text=text,
+                categories=CATEGORIES,
+            )
+        )
+        new_summary, new_tags = self._parse_summary_json(raw)
+        if not new_tags and tags:
+            # model dropped tags: keep the old ones
+            new_tags = tags
+        return new_summary, new_tags

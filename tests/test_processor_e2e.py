@@ -45,13 +45,15 @@ class MockLLM:
         v[-1] = 0.1
         return v
 
-    async def summarize_new_event(self, title: str, text: str) -> str:
+    async def summarize_new_event(self, title: str, text: str) -> tuple[str, list[str]]:
         self.calls.append(("new", title))
-        return f"Сводка (новое): {title}"
+        return f"Сводка (новое): {title}", ["ЭКОНОМИКА"]
 
-    async def summarize_merge(self, summary: str, title: str, text: str) -> str:
+    async def summarize_merge(
+        self, summary: str, title: str, text: str, tags: list[str] | None = None
+    ) -> tuple[str, list[str]]:
         self.calls.append(("merge", title))
-        return f"{summary} + деталь от {title}"
+        return f"{summary} + деталь от {title}", (tags or []) + ["ТЕСТ"]
 
 
 async def main() -> None:

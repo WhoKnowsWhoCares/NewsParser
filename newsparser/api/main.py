@@ -88,20 +88,31 @@ MAX_PAGE_EVENTS = 50  # hard cap on events per page regardless of the query para
 
 
 @app.get("/api/events")
-async def events(limit: int = 50):
-    """Latest events: try redis cache first, fall back to postgres."""
+async def events(limit: int = 50, tag: str = ""):
+    """Latest events: try redis cache first, fall back to postgres.
+
+    tag: optional exact tag filter (case-insensitive) — cache path filters
+    in memory, db path filters in SQL.
+    """
     settings = get_settings()
     limit = max(1, min(limit, MAX_PAGE_EVENTS, settings.redis_latest_max))
-    try:
-        raw = await redis_client.hgetall(settings.redis_latest_key)
-        items = [json.loads(v) for v in raw.values()]
-        items.sort(key=lambda e: e.get("updated_at", ""), reverse=True)
-        if items:
-            return {"events": items[:limit], "source": "cache"}
-    except Exception:
-        pass
-    rows = await db.latest_events(limit=limit)
+    if not tag:
+        try:
+            raw = await redis_client.hgetall(settings.redis_latest_key)
+            items = [json.loads(v) for v in raw.values()]
+            items.sort(key=lambda e: e.get("updated_at", ""), reverse=True)
+            if items:
+                return {"events": items[:limit], "source": "cache"}
+        except Exception:
+            pass
+    rows = await db.latest_events(limit=limit, tag=tag or None)
     return {"events": rows, "source": "db"}
+
+
+@app.get("/api/tags")
+async def tags():
+    """All tags with usage counts (for the filter chips)."""
+    return {"tags": await db.all_tags()}
 
 
 @app.get("/api/events/{event_id}")
@@ -109,6 +120,7 @@ async def event_details(event_id: int):
     row = await db.pool.fetchrow(
         """
         SELECT e.id, e.summary, e.sources_count, e.first_seen_at, e.updated_at,
+               e.tags,
                COALESCE(json_agg(json_build_object(
                     'title', n.title, 'source', n.source, 'link', n.link
                )) FILTER (WHERE n.id IS NOT NULL), '[]') AS items,

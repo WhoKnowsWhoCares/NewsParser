@@ -82,24 +82,35 @@ async def process_item(
             DEDUP_MATCHES.inc()
             logger.info("Matched event {} (similarity {:.3f}) for {}", event_id, similarity, link)
             event = await db.get_event(event_id)
-            merged = await llm.summarize_merge(event["summary"], title, text)
+            merged, tags = await llm.summarize_merge(
+                event["summary"], title, text, tags=list(event["tags"] or [])
+            )
             new_embedding = await llm.embed(merged)
-            await db.update_event_summary(event_id, summary=merged, embedding=new_embedding)
+            await db.update_event_summary(
+                event_id, summary=merged, embedding=new_embedding, tags=tags
+            )
         else:
-            summary = await llm.summarize_new_event(title, text)
+            summary, tags = await llm.summarize_new_event(title, text)
             merged_embedding = await llm.embed(summary)
-            event_id = await db.create_event(summary=summary, embedding=merged_embedding)
-            logger.info("New event {} created for {}", event_id, link)
+            event_id = await db.create_event(
+                summary=summary, embedding=merged_embedding, tags=tags
+            )
+            logger.info("New event {} created for {} [tags: {}]", event_id, link, tags)
         ITEMS_PROCESSED.labels("ok").inc()
     else:
         # no vector -> cannot dedup; still summarize so the event exists
-        summary = await llm.summarize_new_event(title, text)
+        summary, tags = await llm.summarize_new_event(title, text)
         try:
             merged_embedding = await llm.embed(summary)
-            event_id = await db.create_event(summary=summary, embedding=merged_embedding)
+            event_id = await db.create_event(
+                summary=summary, embedding=merged_embedding, tags=tags
+            )
         except Exception:  # noqa: BLE001 - event without vector, embed later too
-            event_id = await db.create_event(summary=summary, embedding=None)
-        logger.info("New event {} created for {} (no dedup: embedding failed)", event_id, link)
+            event_id = await db.create_event(summary=summary, embedding=None, tags=tags)
+        logger.info(
+            "New event {} created for {} (no dedup: embedding failed) [tags: {}]",
+            event_id, link, tags,
+        )
         ITEMS_PROCESSED.labels("stale_saved").inc()
 
     published_raw = item.get("published_at")
