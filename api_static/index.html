@@ -131,7 +131,7 @@
 
     async function load() {
       try {
-        const resp = await fetch('/api/events?limit=30');
+        const resp = await fetch('/api/events?limit=50');
         if (!resp.ok) throw new Error(resp.status);
         const data = await resp.json();
         updated.textContent = 'обновлено: ' + new Date().toLocaleTimeString('ru-RU');

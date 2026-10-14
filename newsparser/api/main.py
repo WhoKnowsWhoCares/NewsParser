@@ -84,11 +84,14 @@ async def healthz():
     return JSONResponse(content=checks, status_code=status)
 
 
+MAX_PAGE_EVENTS = 50  # hard cap on events per page regardless of the query param
+
+
 @app.get("/api/events")
-async def events(limit: int = 30):
+async def events(limit: int = 50):
     """Latest events: try redis cache first, fall back to postgres."""
     settings = get_settings()
-    limit = max(1, min(limit, settings.redis_latest_max))
+    limit = max(1, min(limit, MAX_PAGE_EVENTS, settings.redis_latest_max))
     try:
         raw = await redis_client.hgetall(settings.redis_latest_key)
         items = [json.loads(v) for v in raw.values()]
