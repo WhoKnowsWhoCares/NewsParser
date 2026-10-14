@@ -27,6 +27,7 @@ Pipeline: `source → news:raw → processor → postgres (events) + redis cache
 - **Queue**: `QUEUE_MAX_LENGTH` cap enforced at the parsers (overflow → drop with a log); `STREAM_MAX_LEN` — stream retention (XTRIM).
 - **DB retention**: `DB_RETENTION_DAYS` — the processor daily prunes old news items and orphaned events.
 - **LLM fallback**: chat — local endpoint → OpenRouter (via proxy); embeddings — local only (vectors from different models are not comparable, fallback is intentionally absent). While the embedder is down, items accumulate in pending and are processed after recovery.
+- **Multilingual dedup**: the embedding model is multilingual — a Russian and an English news item about the same event match in a shared vector space (measured: RU text ↔ RU summary 0.95, EN text ↔ RU summary 0.91 against the 0.85 threshold). Summaries are always in Russian; the source language is kept in `news_items.language`. The cross-lingual margin above the threshold is thinner — adding EN sources may require threshold calibration.
 - **Healthchecks**: API — `/healthz` (real postgres/redis checks); processor and collector — heartbeat file (stale mtime → restart).
 - **Metrics**: Prometheus. API — `:8003/metrics`, workers — internal :9101/:9102. Processing/dedup counters, LLM latency, queue depth.
 - **Logs**: `LOG_FORMAT=json` — structured JSON logs (prod), plain text by default (dev). Daily rotation, 30-day retention.
