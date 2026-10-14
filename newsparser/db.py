@@ -134,6 +134,81 @@ class Database:
             return row["id"], float(row["similarity"])
         return None
 
+    async def orphan_events(self, limit: int = 20) -> list[asyncpg.Record]:
+        """Events with no vector (created while the embedder was down)."""
+        return await self.pool.fetch(
+            """
+            SELECT id, summary
+            FROM events
+            WHERE embedding IS NULL
+            ORDER BY updated_at
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    async def similar_events(
+        self, embedding: list[float], limit: int = 5, exclude_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Top-N nearest events by cosine, excluding one (e.g. the current)."""
+        rows = await self.pool.fetch(
+            """
+            SELECT id, summary, sources_count, updated_at,
+                   1 - (embedding <=> $1) AS similarity
+            FROM events
+            WHERE embedding IS NOT NULL AND id <> $2
+            ORDER BY embedding <=> $1
+            LIMIT $3
+            """,
+            embedding,
+            exclude_id or 0,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def similar_news_items(
+        self,
+        embedding: list[float],
+        limit: int = 5,
+        exclude_event_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Top-N news items nearest to the given vector, other events only."""
+        rows = await self.pool.fetch(
+            """
+            SELECT n.id, n.title, n.source, n.link, n.language, n.event_id,
+                   e.summary AS event_summary,
+                   1 - (n.embedding <=> $1) AS similarity
+            FROM news_items n
+            LEFT JOIN events e ON e.id = n.event_id
+            WHERE n.embedding IS NOT NULL
+              AND (n.event_id IS NULL OR n.event_id <> $2)
+            ORDER BY n.embedding <=> $1
+            LIMIT $3
+            """,
+            embedding,
+            exclude_event_id or 0,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def search_events(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Full-text search over event summaries (Russian + English configs)."""
+        rows = await self.pool.fetch(
+            """
+            SELECT e.id, e.summary, e.sources_count, e.updated_at, e.tags,
+                   ts_rank(e.fts, websearch_to_tsquery('russian', $1)
+                              || websearch_to_tsquery('english', $1)) AS rank
+            FROM events e
+            WHERE e.fts @@ (websearch_to_tsquery('russian', $1)
+                               || websearch_to_tsquery('english', $1))
+            ORDER BY rank DESC, e.updated_at DESC
+            LIMIT $2
+            """,
+            query,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
     async def create_event(
         self,
         *,
@@ -169,8 +244,11 @@ class Database:
             UPDATE events
             SET summary = $2,
                 embedding = $3,
-                tags = (SELECT array_agg(DISTINCT t)
-                        FROM unnest(tags || $4::text[]) AS t),
+                tags = COALESCE(
+                    (SELECT array_agg(DISTINCT t)
+                     FROM unnest(tags || $4::text[]) AS t),
+                    '{}'
+                ),
                 sources_count = sources_count + 1,
                 updated_at = now()
             WHERE id = $1

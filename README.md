@@ -12,7 +12,7 @@
 |---|---|---|
 | `newsparser-collector` | RSS (RIA), site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors | none |
 | `newsparser-processor` | Consumes the stream (consumer group): link dedup → embed → nearest-event lookup in pgvector → new event (LLM summary) or update of an existing one (LLM merges details) → redis cache. Graceful degradation: when the embedder is down, items are saved with `embedding_stale` and backfilled later | none |
-| `newsparser-api` | FastAPI: `/api/events`, `/api/events/{id}`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI on `/` | **8003** (the only one) |
+| `newsparser-api` | FastAPI: `/api/events` (with `?tag=` filter), `/api/events/{id}`, `/api/events/{id}/similar` (vector similar), `/api/search` (full-text RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI with search, tag filters and a "Similar" section | **8003** (the only one) |
 | `newsparser-tgbot` | Event delivery to subscribers, message editing on event updates, likes | none |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — events, news items, reactions, vector search (HNSW, cosine) | none |
 | `newsparser-redis` | `news:raw` queue (Streams, auto-trim) + latest-events cache `events:latest` | none |
@@ -108,9 +108,11 @@ Adding a new source — a module in `newsparser/parsers/` + a record in
 - [x] LLM: local endpoint (chat + embeddings) with OpenRouter chat fallback
 - [x] Graceful embedding degradation + backfill
 - [x] Queue/DB retention, healthchecks, Prometheus metrics, JSON logs
+- [x] Similar-news search (vector) + full-text search over events
+- [x] Event categorization (tags + tickers, UI filters)
+- [x] Orphan-event backfill after embedder outages (auto-merge into nearest event)
 - [ ] New sources (RU/EN finance)
-- [ ] Similar-news search (RAG) on the accumulated embeddings
-- [ ] Event categorization (UI filters, targeted bot subscriptions)
+- [ ] Targeted bot subscriptions by tag
 - [ ] Dedup threshold calibration on real data
 
 Documentation and plans: Obsidian, `AINotes/Documentation/NewsParser/`.

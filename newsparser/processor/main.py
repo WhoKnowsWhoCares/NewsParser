@@ -185,6 +185,73 @@ async def backfill_stale_embeddings(
     return fixed
 
 
+async def merge_orphan_events(
+    db: Database,
+    llm: LLMClient,
+    settings: Settings,
+    limit: int = 10,
+) -> int:
+    """Give vectors to events created while the embedder was down, then try
+    to merge each into its nearest existing event (dedup backfill).
+
+    Returns the number of orphans processed. Skipped while the embedder is
+    unhealthy (probe fails).
+    """
+    rows = await db.orphan_events(limit)
+    if not rows:
+        return 0
+
+    try:
+        await llm.embed("probe")
+    except Exception:  # noqa: BLE001 - embedder still unavailable
+        return 0
+
+    processed = 0
+    for row in rows:
+        if not row["summary"]:
+            continue
+        try:
+            emb = await llm.embed(row["summary"][:4000])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Orphan embed failed for event {}: {}", row["id"], e)
+            break
+        # does an older event about the same thing exist?
+        similar = await db.find_similar_event(emb, settings.dedup_threshold)
+        if similar and similar[0] != row["id"]:
+            keep_id, similarity = similar
+            keep = await db.get_event(keep_id)
+            if keep is None:
+                continue
+            # merge orphan summary into the surviving event: update first,
+            # then re-point news and drop the orphan
+            merged, tags = await llm.summarize_merge(
+                keep["summary"], row["summary"][:200], row["summary"],
+                tags=list(keep["tags"] or []),
+            )
+            merged_embedding = await llm.embed(merged)
+            await db.update_event_summary(
+                keep_id, summary=merged, embedding=merged_embedding, tags=tags
+            )
+            await db.pool.execute(
+                "UPDATE news_items SET event_id = $2 WHERE event_id = $1",
+                row["id"], keep_id,
+            )
+            await db.pool.execute("DELETE FROM events WHERE id = $1", row["id"])
+            logger.info(
+                "Orphan event {} merged into {} (similarity {:.3f})",
+                row["id"], keep_id, similarity,
+            )
+        else:
+            await db.pool.execute(
+                "UPDATE events SET embedding = $2 WHERE id = $1", row["id"], emb
+            )
+            logger.info("Orphan event {} got its vector", row["id"])
+        processed += 1
+    if processed:
+        logger.info("Orphan events processed: {}", processed)
+    return processed
+
+
 async def main() -> None:
     settings = get_settings()
     setup_logging()
@@ -210,6 +277,8 @@ async def main() -> None:
         while True:
             # embedder healthy? then also re-embed previously failed items
             await backfill_stale_embeddings(db, llm, settings)
+            # and give vectors to / merge events created during the outage
+            await merge_orphan_events(db, llm, settings)
 
             # first: retry pending items (from this consumer's earlier crashed runs).
             # Any pending entry is fair game: on startup, stale entries have

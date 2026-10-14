@@ -61,6 +61,28 @@
         .tag-filter { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px auto 16px;
       max-width: 780px; align-items: baseline; }
     .tag-filter .meta { margin-right: 4px; }
+    .search-row { max-width: 780px; margin: 0 auto 16px; display: flex; gap: 8px; }
+    .search-row input {
+      flex: 1; background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: 0.9rem;
+      font-family: inherit; outline: none;
+    }
+    .search-row input:focus { border-color: var(--accent); }
+    .search-row button {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 14px; color: var(--text); cursor: pointer; font-family: inherit;
+    }
+    .search-row button:hover { border-color: var(--accent); color: var(--accent); }
+    .search-row .hidden { display: none; }
+    details.similar-panel { border: 1px solid var(--border); border-radius: 10px;
+      padding: 8px 12px; margin-top: 8px; }
+    details.similar-panel summary { cursor: pointer; color: var(--muted);
+      font-size: 0.8rem; }
+    .similar-item { padding: 5px 0; font-size: 0.82rem; border-bottom: 1px solid var(--grid); }
+    .similar-item:last-child { border-bottom: none; }
+    .similar-item a { color: var(--accent); text-decoration: none; }
+    .similar-item .sim { color: var(--muted); font-size: 0.72rem; }
+    .similar-item .src { color: var(--muted); font-size: 0.72rem; }
     /* filter row uses pill style (distinct from in-card dashed tags) */
     .tag-filter button.tag {
       border: 1px solid var(--border); border-radius: 999px; color: var(--muted);
@@ -105,6 +127,12 @@
     </table>
   </details>
   <div class="tag-filter" id="tag-filter"></div>
+  <div class="search-row">
+    <input id="search-input" type="search" placeholder="Поиск по событиям…"
+           autocomplete="off">
+    <button id="search-btn">Найти</button>
+    <button id="search-clear" class="hidden">✕ сброс</button>
+  </div>
   <main id="feed"><div class="empty">Загрузка…</div></main>
   <script>
     const feed = document.getElementById('feed');
@@ -138,10 +166,14 @@
         return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
       }).join('');
       const when = e.updated_at ? new Date(e.updated_at).toLocaleString('ru-RU') : '';
-      return `<article class="event">
+      return `<article class="event" data-id="${e.id}">
         <div class="meta"><span>${when}</span><span>источников: ${e.sources_count ?? 1}</span></div>
         <div class="summary">${escapeHtml(e.summary)}</div>
         <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}${renderTags(e.tags)}</div>
+        <details class="similar-panel">
+          <summary>Похожие события и новости</summary>
+          <div class="similar-body"><div class="meta">Загрузка…</div></div>
+        </details>
       </article>`;
     }
 
@@ -378,11 +410,110 @@
       }
     }
 
+    // ---------- similar events (lazy load on expand) ----------
+    function similarItemHtml(ev) {
+      const sim = Math.round((ev.similarity ?? 0) * 100);
+      return `<div class="similar-item">
+        <a href="#" class="jump" data-id="${ev.id}">${escapeHtml((ev.summary || '').slice(0, 140))}…</a>
+        <div class="sim">событие · схожесть ${sim}% · источников: ${ev.sources_count ?? 1}</div>
+      </div>`;
+    }
+    function similarNewsHtml(n) {
+      const sim = Math.round((n.similarity ?? 0) * 100);
+      const label = n.source || (n.link || '').replace(/^https?:\/\//, '').split('/')[0];
+      return `<div class="similar-item">
+        <a href="${escapeHtml(n.link)}" target="_blank" rel="noopener">${escapeHtml((n.title || '').slice(0, 120))}</a>
+        <div class="src">${escapeHtml(label)} · ${n.language || ''} · схожесть ${sim}%</div>
+      </div>`;
+    }
+
+    feed.addEventListener('toggle', async e => {
+      const panel = e.target.closest('details.similar-panel');
+      if (!panel || !panel.open || panel.dataset.loaded) return;
+      panel.dataset.loaded = '1';
+      const body = panel.querySelector('.similar-body');
+      const eventId = panel.closest('article').dataset.id;
+      try {
+        const resp = await fetch(`/api/events/${eventId}/similar?limit=5`);
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        const parts = [];
+        if (data.events.length) parts.push(
+          '<div class="meta" style="margin:4px 0">События той же темы:</div>',
+          ...data.events.map(similarItemHtml));
+        if (data.news.length) parts.push(
+          '<div class="meta" style="margin:8px 0 4px">Похожие новости (другие события):</div>',
+          ...data.news.map(similarNewsHtml));
+        body.innerHTML = parts.length
+          ? parts.join('')
+          : '<div class="meta">Похожего не нашлось</div>';
+      } catch (err) {
+        panel.dataset.loaded = '';
+        body.innerHTML = '<div class="meta">Не удалось загрузить</div>';
+      }
+    }, true);
+
+    // jump to an event in the feed
+    feed.addEventListener('click', e => {
+      const link = e.target.closest('a.jump');
+      if (!link) return;
+      e.preventDefault();
+      const target = feed.querySelector(`article[data-id="${link.dataset.id}"]`);
+      if (target) {
+        target.scrollIntoView({behavior: 'smooth'});
+        target.style.outline = '2px solid var(--accent)';
+        setTimeout(() => (target.style.outline = ''), 1500);
+      }
+    });
+
+    // ---------- search ----------
+    const searchInput = document.getElementById('search-input');
+    const searchClear = document.getElementById('search-clear');
+    let searchMode = '';
+
+    function renderSearchResults(events) {
+      updated.textContent = `поиск: «${searchMode}» — ${events.length} результат(ов)`;
+      feed.innerHTML = events.length
+        ? events.map(e => renderEvent({...e, items: []})).join('')
+        : '<div class="empty">Ничего не найдено</div>';
+    }
+
+    async function runSearch(q) {
+      searchMode = q;
+      searchClear.classList.remove('hidden');
+      try {
+        const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        renderSearchResults(data.events);
+      } catch (err) {
+        feed.innerHTML = '<div class="err">Поиск не удался</div>';
+      }
+    }
+
+    function resetSearch() {
+      searchMode = '';
+      searchInput.value = '';
+      searchClear.classList.add('hidden');
+      load();
+    }
+
+    document.getElementById('search-btn').addEventListener('click', () => {
+      const q = searchInput.value.trim();
+      if (q) runSearch(q); else resetSearch();
+    });
+    searchInput.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const q = searchInput.value.trim();
+      if (q) runSearch(q); else resetSearch();
+    });
+    searchClear.addEventListener('click', resetSearch);
+
     load();
     loadSources();
     loadTags();
     loadMetrics();
-    setInterval(load, 30000);
+    setInterval(() => { if (!searchMode) load(); }, 30000);
     setInterval(loadSources, 60000);
     setInterval(loadMetrics, 60000);  // раз в минуту достаточно: бакеты по 5м
   </script>

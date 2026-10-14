@@ -12,7 +12,7 @@ delivery via web page, REST API and Telegram bot.
 |---|---|---|
 | `newsparser-collector` | RSS (РИА), парсинг сайта (BCS Express), Telegram-каналы (Telethon, user API). Кладут сырые новости в Redis Stream `news:raw`. Экспоненциальный backoff при ошибках источника | нет |
 | `newsparser-processor` | Берёт новости из потока (consumer group): дедуп по link → эмбеддинг → поиск ближайшего события в pgvector → новое событие (LLM-сводка) или обновление существующего (LLM вплетает детали) → кеш в Redis. Graceful degradation: если embedder недоступен, новость сохраняется с `embedding_stale` и досчитывается позже (backfill) | нет |
-| `newsparser-api` | FastAPI: `/api/events`, `/api/events/{id}`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс на `/` | **8003** (единственный) |
+| `newsparser-api` | FastAPI: `/api/events` (с фильтром `?tag=`), `/api/events/{id}`, `/api/events/{id}/similar` (векторный поиск похожих), `/api/search` (полнотекстовый RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс с поиском, фильтрами и блоком «Похожие» | **8003** (единственный) |
 | `newsparser-tgbot` | Рассылка событий подписчикам, редактирование сообщения при обновлении события, сбор лайков | нет |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — события, новости, реакции, векторный поиск (HNSW, cosine) | нет |
 | `newsparser-redis` | Очередь `news:raw` (Streams, авто-trim) + кеш последних событий `events:latest` | нет |
@@ -108,9 +108,11 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - [x] LLM: локальный endpoint (chat + embeddings) с fallback на OpenRouter для chat
 - [x] Graceful degradation эмбеддингов + backfill
 - [x] Ретенция очереди и БД, healthchecks, Prometheus-метрики, JSON-логи
+- [x] Поиск по схожим новостям (векторный) + полнотекстовый поиск по событиям
+- [x] Категоризация событий (теги + тикеры, фильтры в UI)
+- [x] Дожим событий-сирот после простоя embedder'а (авто-мерж в ближайшее событие)
 - [ ] Новые источники (RU/EN финансы)
-- [ ] Поиск по схожим новостям (RAG) на базе накопленных эмбеддингов
-- [ ] Категоризация событий (фильтры в UI, адресные подписки бота)
+- [ ] Адресные подписки бота по тегам
 - [ ] Калибровка порога дедупликации на реальных данных
 
 Документация и планы: Obsidian, `AINotes/Documentation/NewsParser/`.

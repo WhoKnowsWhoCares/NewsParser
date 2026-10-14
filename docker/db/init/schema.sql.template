@@ -13,7 +13,11 @@ CREATE TABLE IF NOT EXISTS events (
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     tg_message_id BIGINT,
-    tags          TEXT[] NOT NULL DEFAULT '{}'  -- category + tickers: 'ЦБ', 'SBER', ...
+    tags          TEXT[] NOT NULL DEFAULT '{}',  -- category + tickers: 'ЦБ', 'SBER', ...
+    fts           tsvector GENERATED ALWAYS AS (
+                      to_tsvector('russian', coalesce(summary, '')) ||
+                      to_tsvector('english', coalesce(summary, ''))
+                  ) STORED
 );
 
 CREATE TABLE IF NOT EXISTS news_items (
@@ -48,3 +52,5 @@ CREATE INDEX IF NOT EXISTS idx_events_updated_at ON events(updated_at);
 -- vector index (cosine)
 CREATE INDEX IF NOT EXISTS idx_events_embedding ON events
     USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);
+-- full-text search over summaries (RU + EN)
+CREATE INDEX IF NOT EXISTS idx_events_fts ON events USING GIN (fts);

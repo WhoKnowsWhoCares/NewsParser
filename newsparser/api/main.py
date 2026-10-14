@@ -142,6 +142,40 @@ async def event_details(event_id: int):
     return result
 
 
+@app.get("/api/events/{event_id}/similar")
+async def similar_events(event_id: int, limit: int = 5, with_news: bool = True):
+    """Similar events + (optionally) similar news items from other events.
+
+    Vector search over pgvector; the current event's own news items are
+    excluded so the section shows genuinely other coverage.
+    """
+    limit = max(1, min(limit, 10))
+    event = await db.get_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event["embedding"] is None:
+        return {"events": [], "news": []}
+    vec = event["embedding"]
+    vec = vec.to_list() if hasattr(vec, "to_list") else list(vec)
+    similar = await db.similar_events(vec, limit=limit, exclude_id=event_id)
+    news = []
+    if with_news:
+        news = await db.similar_news_items(
+            vec, limit=limit, exclude_event_id=event_id
+        )
+    return {"events": similar, "news": news}
+
+
+@app.get("/api/search")
+async def search(q: str, limit: int = 20):
+    """Full-text search over event summaries (Russian and English)."""
+    q = q.strip()
+    if not q:
+        return {"events": []}
+    limit = max(1, min(limit, 50))
+    return {"events": await db.search_events(q, limit=limit)}
+
+
 @app.get("/api/sources")
 async def sources():
     """News sources being collected, with per-source item counts."""
