@@ -32,6 +32,7 @@ delivery via web page, REST API and Telegram bot.
 - **Метрики**: Prometheus. API — `:8003/metrics`, воркеры — внутренние :9101/:9102. Счётчики обработки, дедупа, латентность LLM, глубина очереди.
 - **Логи**: `LOG_FORMAT=json` — структурированные JSON-логи (prod), по умолчанию текстовые (dev). Ротация daily, retention 30 дней.
 - **Backoff**: парсеры удваивают интервал опроса при ошибках источника (до ×16).
+- **Model keeper**: `MODEL_KEEPER=1` — процессор каждую минуту проверяет, что gemma-4 и embeddinggemma загружены и запинены на локальном LLM-сервере, восстанавливает при выгрузке. Загрузка с `alongside: true` и урезанным контекстом (8192/2048), чтобы обе модели помещались в VRAM одновременно. `MODEL_KEEPER_EVICT` — список чужих моделей для принудительной выгрузки (обычно пусто: VRAM-менеджер сам свапает модели по запросу).
 
 ## Быстрый старт
 
@@ -89,7 +90,8 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - `TG_PROXY_URL` — socks5/http прокси (Telegram API + OpenRouter); пусто → напрямую;
 - `TELETHON_SESSION` — StringSession для прода (пусто → файл `newsparser.session`);
 - `LOG_FORMAT=json` — структурированные логи;
-- `METRICS_PORT` — порт /metrics воркеров.
+- `METRICS_PORT` — порт /metrics воркеров;
+- `MODEL_KEEPER` / `MODEL_KEEPER_INTERVAL` / `MODEL_KEEPER_EVICT` — закрепление моделей на локальном LLM-сервере (интервал проверки, список на принудительную выгрузку).
 
 ## Источники (текущие)
 
@@ -108,6 +110,7 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - [x] LLM: локальный endpoint (chat + embeddings) с fallback на OpenRouter для chat
 - [x] Graceful degradation эмбеддингов + backfill
 - [x] Ретенция очереди и БД, healthchecks, Prometheus-метрики, JSON-логи
+- [x] Model keeper: автоматическое восстановление моделей на локальном LLM-сервере
 - [x] Поиск по схожим новостям (векторный) + полнотекстовый поиск по событиям
 - [x] Категоризация событий (теги + тикеры, фильтры в UI)
 - [x] Дожим событий-сирот после простоя embedder'а (авто-мерж в ближайшее событие)

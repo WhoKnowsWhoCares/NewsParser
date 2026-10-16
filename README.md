@@ -32,6 +32,7 @@ Pipeline: `source → news:raw → processor → postgres (events) + redis cache
 - **Metrics**: Prometheus. API — `:8003/metrics`, workers — internal :9101/:9102. Processing/dedup counters, LLM latency, queue depth.
 - **Logs**: `LOG_FORMAT=json` — structured JSON logs (prod), plain text by default (dev). Daily rotation, 30-day retention.
 - **Backoff**: parsers double the poll interval on source errors (up to ×16).
+- **Model keeper**: `MODEL_KEEPER=1` — the processor checks every minute that gemma-4 and embeddinggemma are loaded and pinned on the local LLM server, and restores them if evicted. Loads with `alongside: true` and a reduced context (8192/2048) so both models fit in VRAM simultaneously. `MODEL_KEEPER_EVICT` — foreign models to force-unload (usually empty: the VRAM manager swaps models on demand).
 
 ## Quick start
 
@@ -89,7 +90,8 @@ All parameters live in `.env` (see `.env_template`). Key ones:
 - `TG_PROXY_URL` — socks5/http proxy (Telegram API + OpenRouter); empty → direct;
 - `TELETHON_SESSION` — StringSession for prod (empty → `newsparser.session` file);
 - `LOG_FORMAT=json` — structured logs;
-- `METRICS_PORT` — worker /metrics port.
+- `METRICS_PORT` — worker /metrics port;
+- `MODEL_KEEPER` / `MODEL_KEEPER_INTERVAL` / `MODEL_KEEPER_EVICT` — model pinning on the local LLM server (check interval, force-unload list).
 
 ## Sources (current)
 
@@ -108,6 +110,7 @@ Adding a new source — a module in `newsparser/parsers/` + a record in
 - [x] LLM: local endpoint (chat + embeddings) with OpenRouter chat fallback
 - [x] Graceful embedding degradation + backfill
 - [x] Queue/DB retention, healthchecks, Prometheus metrics, JSON logs
+- [x] Model keeper: automatic model restoration on the local LLM server
 - [x] Similar-news search (vector) + full-text search over events
 - [x] Event categorization (tags + tickers, UI filters)
 - [x] Orphan-event backfill after embedder outages (auto-merge into nearest event)
