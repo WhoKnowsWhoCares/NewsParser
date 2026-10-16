@@ -47,10 +47,20 @@ class ModelKeeper:
         return {m["id"] for m in resp.json().get("data", [])}
 
     async def _load(self, model_path: str) -> None:
+        # alongside: keep already-loaded models in VRAM (no eviction swap);
+        # max_seq_length: 8192 is plenty for news, cuts KV cache from ~5GB to <1GB
+        payload = {
+            "model_path": model_path,
+            "alongside": True,
+            "max_seq_length": 8192,
+        }
+        if self._short(model_path) == self._short(self.settings.embeddings_model):
+            # embedder needs no chat context at all
+            payload["max_seq_length"] = 2048
         resp = await self.client.post(
             f"{self.api}/api/inference/load",
             headers=self.headers,
-            json={"model_path": model_path},
+            json=payload,
             timeout=600.0,
         )
         resp.raise_for_status()
