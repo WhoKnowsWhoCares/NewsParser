@@ -65,12 +65,15 @@ class ModelKeeper:
         resp.raise_for_status()
 
     async def _pin(self) -> None:
+        chat = self.settings.llm_model
+        embed = self.settings.embeddings_model
         resp = await self.client.put(
             f"{self.api}/api/settings/pinned-models",
             headers=self.headers,
             json={
-                "connected": [self.settings.llm_model],
-                "embedding": [self.settings.embeddings_model],
+                "pinned": [chat, embed],
+                "connected": [chat],
+                "embedding": [embed],
             },
         )
         resp.raise_for_status()
