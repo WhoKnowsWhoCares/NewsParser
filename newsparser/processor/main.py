@@ -43,6 +43,11 @@ STREAM_CONSUMER_GROUP = "processors"
 CONSUMER_NAME = "processor-1"
 
 
+def _allowed_categories(settings: Settings) -> set[str]:
+    """Parse ALLOWED_CATEGORIES (comma-separated) into a lowercase set."""
+    return {c.strip().lower() for c in settings.allowed_categories.split(",") if c.strip()}
+
+
 async def process_item(
     db: Database,
     llm: LLMClient,
@@ -75,6 +80,14 @@ async def process_item(
         embedding = None
         embedding_stale = True
 
+    allowed = _allowed_categories(settings)
+
+    def _category_allowed(tags: list[str]) -> bool:
+        """Empty whitelist = keep all; otherwise tags[0] must be in it."""
+        if not allowed:
+            return True
+        return bool(tags) and tags[0].lower() in allowed
+
     if embedding is not None:
         similar = await db.find_similar_event(embedding, settings.dedup_threshold)
         if similar:
@@ -91,6 +104,35 @@ async def process_item(
             )
         else:
             summary, tags = await llm.summarize_new_event(title, text)
+            if not _category_allowed(tags):
+                logger.info("Category {} filtered out: {}", tags[:1], link)
+                ITEMS_PROCESSED.labels("filtered").inc()
+                # save the item without an event so dedup-by-link still works
+                embedding = None
+                event_id = None
+                published_raw = item.get("published_at")
+                published_at = None
+                if published_raw:
+                    try:
+                        published_at = datetime.fromisoformat(published_raw)
+                        if published_at.tzinfo is None:
+                            published_at = published_at.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+                await db.insert_news_item(
+                    source_type=item.get("source_type", "unknown"),
+                    source=item.get("source", ""),
+                    title=title,
+                    text=text,
+                    summary=item.get("summary", ""),
+                    link=link,
+                    language=item.get("language", "ru"),
+                    published_at=published_at,
+                    embedding=None,
+                    embedding_stale=False,
+                    event_id=None,
+                )
+                return
             merged_embedding = await llm.embed(summary)
             event_id = await db.create_event(
                 summary=summary, embedding=merged_embedding, tags=tags
@@ -100,18 +142,23 @@ async def process_item(
     else:
         # no vector -> cannot dedup; still summarize so the event exists
         summary, tags = await llm.summarize_new_event(title, text)
-        try:
-            merged_embedding = await llm.embed(summary)
-            event_id = await db.create_event(
-                summary=summary, embedding=merged_embedding, tags=tags
+        if not _category_allowed(tags):
+            logger.info("Category {} filtered out: {}", tags[:1], link)
+            ITEMS_PROCESSED.labels("filtered").inc()
+            event_id = None
+        else:
+            try:
+                merged_embedding = await llm.embed(summary)
+                event_id = await db.create_event(
+                    summary=summary, embedding=merged_embedding, tags=tags
+                )
+            except Exception:  # noqa: BLE001 - event without vector, embed later too
+                event_id = await db.create_event(summary=summary, embedding=None, tags=tags)
+            logger.info(
+                "New event {} created for {} (no dedup: embedding failed) [tags: {}]",
+                event_id, link, tags,
             )
-        except Exception:  # noqa: BLE001 - event without vector, embed later too
-            event_id = await db.create_event(summary=summary, embedding=None, tags=tags)
-        logger.info(
-            "New event {} created for {} (no dedup: embedding failed) [tags: {}]",
-            event_id, link, tags,
-        )
-        ITEMS_PROCESSED.labels("stale_saved").inc()
+            ITEMS_PROCESSED.labels("stale_saved").inc()
 
     published_raw = item.get("published_at")
     published_at = None

@@ -62,6 +62,7 @@ async def parse_article(session: aiohttp.ClientSession, link: str) -> str:
 async def run_site_parser(settings: Settings, redis_client) -> None:
     interval = settings.poll_interval
     consecutive_errors = 0
+    pushed_links: set[str] = set()  # de-dup across polls
     async with aiohttp.ClientSession(trust_env=True) as session:
         while True:
             backoff = min(interval * 2**consecutive_errors, interval * 16)
@@ -69,6 +70,9 @@ async def run_site_parser(settings: Settings, redis_client) -> None:
                 feed_items = await parse_feed(session)
                 consecutive_errors = 0
                 for feed_item in feed_items[:10]:
+                    if feed_item["link"] in pushed_links:
+                        continue
+                    pushed_links.add(feed_item["link"])
                     text = await parse_article(session, feed_item["link"])
                     if not text:
                         continue

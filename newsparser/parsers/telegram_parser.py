@@ -9,6 +9,7 @@ session `newsparser.session` (created by newsparser/tools/tg_login.py).
 Proxy: TG_PROXY_URL (socks5://host:port or http://host:port) is used when set.
 """
 
+import asyncio
 import os
 
 from loguru import logger
@@ -16,6 +17,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from newsparser.config import Settings
+from newsparser.metrics import PARSER_ITEMS_DROPPED, PARSER_ITEMS_PUSHED
 from newsparser.redis_queue import push_news
 
 SESSION_NAME = "newsparser"
@@ -99,7 +101,23 @@ async def run_telegram_parser(settings: Settings, redis_client) -> None:
 
     @client.on(events.NewMessage(chats=channels))
     async def handler(event):
-        item = message_to_item(settings, event.message)
+        await _handle_message(settings, redis_client, event.message)
+
+    async def poll_loop():
+        """Fallback polling: catches posts missed while offline (event-driven
+        updates from Telegram are not guaranteed after downtime)."""
+        interval = settings.poll_interval
+        while True:
+            await asyncio.sleep(interval)
+            for channel in channels:
+                try:
+                    async for message in client.iter_messages(channel, limit=3):
+                        await _handle_message(settings, redis_client, message)
+                except Exception as e:  # noqa: BLE001 - keep polling
+                    logger.warning("TG poll failed for {}: {}", channel, e)
+
+    async def _handle_message(settings, redis_client, message):
+        item = message_to_item(settings, message)
         if item is None:
             return
         result = await push_news(
@@ -107,11 +125,17 @@ async def run_telegram_parser(settings: Settings, redis_client) -> None:
             max_length=settings.queue_max_length,
         )
         if result is None:
+            PARSER_ITEMS_DROPPED.labels("telegram").inc()
             logger.warning(
                 "Queue cap reached, dropped TG item: {source} - {title}",
                 source=item["source"], title=item["title"],
             )
             return
-        logger.debug("TG item pushed: {} - {}", item["source"], item["title"])
+        PARSER_ITEMS_PUSHED.labels("telegram").inc()
+        logger.info("TG item pushed: {} - {}", item["source"], item["title"][:60])
 
-    await client.run_until_disconnected()
+    poll_task = asyncio.create_task(poll_loop())
+    try:
+        await client.run_until_disconnected()
+    finally:
+        poll_task.cancel()

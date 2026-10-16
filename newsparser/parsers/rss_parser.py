@@ -64,6 +64,7 @@ def parse_published(entry) -> datetime | None:
 async def run_rss_parser(settings: Settings, redis_client) -> None:
     interval = settings.poll_interval
     consecutive_errors = 0
+    pushed_links: set[str] = set()  # de-dup across polls (link dedup in processor is too late)
     async with aiohttp.ClientSession(trust_env=True) as session:
         while True:
             backoff = min(interval * 2**consecutive_errors, interval * 16)
@@ -87,6 +88,9 @@ async def run_rss_parser(settings: Settings, redis_client) -> None:
                     title = getattr(entry, "title", "")
                     if not link or not title:
                         continue
+                    if link in pushed_links:
+                        continue  # already queued in an earlier poll
+                    pushed_links.add(link)
                     summary = html_to_text(getattr(entry, "summary", "") or "")
                     text = await fetch_text(session, link, css_selector)
                     published = parse_published(entry)

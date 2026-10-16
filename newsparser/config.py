@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # dedup
     dedup_threshold: float = 0.85  # cosine similarity above -> same event
 
+    # category filter (applied after LLM tagging; comma-separated).
+    # Empty = keep everything. An event whose category is NOT in the list
+    # is not created: the news item is stored but has no event.
+    allowed_categories: str = ""
+
     # queue cap: max items in redis stream (0 = unlimited).
     # Items beyond this are dropped by parsers before entering the queue.
     queue_max_length: int = 10
