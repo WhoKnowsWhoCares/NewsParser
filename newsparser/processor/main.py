@@ -30,6 +30,7 @@ from newsparser.metrics import (
     STALE_EMBEDDINGS,
     start_metrics_server,
 )
+from newsparser.model_keeper import ModelKeeper
 from newsparser.redis_queue import (
     ack_news,
     cache_event,
@@ -318,6 +319,10 @@ async def main() -> None:
     liveness = LivenessFile("/tmp/liveness_processor", max_age_hint=180.0)
     liveness.start(interval=20.0)
     start_metrics_server()
+    if settings.model_keeper:
+        keeper = ModelKeeper(settings, llm.raw_client())
+        keeper.start()
+        await keeper.enforce()  # first pass immediately
 
     try:
         last_prune = time.monotonic()
@@ -402,6 +407,8 @@ async def main() -> None:
                     logger.warning("DB retention prune failed: {}", e)
     finally:
         await liveness.stop()
+        if settings.model_keeper:
+            await keeper.stop()
         await llm.close()
         await db.close()
         await redis_client.aclose()

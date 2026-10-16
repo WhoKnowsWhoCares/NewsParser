@@ -129,6 +129,10 @@ class LLMClient:
     async def close(self) -> None:
         await self._client.aclose()
 
+    def raw_client(self) -> httpx.AsyncClient:
+        """Shared httpx client (used by the model keeper's admin calls)."""
+        return self._client
+
     async def _post(self, ep: _Endpoint | _EmbedEndpoint, path: str, payload: dict) -> dict:
         """POST to ep.base_url/path. For proxied endpoints a one-off client is used."""
         url = f"{ep.base_url}/{path}"

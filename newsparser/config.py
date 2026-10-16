@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_chat_model: str = "google/gemini-2.5-flash-lite"
 
+    # model keeper: enforce our models being loaded+pinned on the local server.
+    # Non-empty model_keeper_evict = comma-separated models to unload when
+    # found loaded (e.g. models someone loaded manually in Studio UI).
+    model_keeper: bool = False
+    model_keeper_interval: float = 60.0
+    model_keeper_evict: str = ""
+
     # dedup
     dedup_threshold: float = 0.85  # cosine similarity above -> same event
 
