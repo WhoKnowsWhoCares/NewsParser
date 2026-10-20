@@ -34,6 +34,15 @@
     }
     .sources a:hover { background: var(--border); }
     .sources a.broken { color: var(--muted); border-style: dashed; }
+    details.more-sources { display: inline-block; }
+    details.more-sources summary {
+      color: var(--muted); font-size: 0.82rem; cursor: pointer;
+      border: 1px dashed var(--border); border-radius: 999px; padding: 2px 10px;
+      list-style: none;
+    }
+    details.more-sources summary::-webkit-details-marker { display: none; }
+    details.more-sources summary:hover { color: var(--accent); border-color: var(--accent); }
+    details.more-sources .sources { margin-top: 6px; }
     /* event tags: same row as source links, visually distinct */
     button.tag {
       display: inline-block; border: 1px dashed var(--border); border-radius: 4px;
@@ -158,18 +167,27 @@
     }
 
     function renderEvent(e) {
-      const sources = (e.items || []).filter(it => it.link).map(it => {
+      const items = (e.items || []).filter(it => it.link);
+      // first 3 sources inline, the rest collapsed into "ещё N" expander
+      const visible = items.slice(0, 3);
+      const hidden = items.slice(3);
+      const sources = visible.map(it => {
         const ok = /^https?:\/\//i.test(it.link);
-        const cls = ok ? '' : ' broken';
         const label = it.source || (ok ? new URL(it.link).hostname : 'источник');
-        if (!ok) return `<span class="sources"><span class="sources"><a class="broken" title="битая ссылка">${escapeHtml(label)}</a></span></span>`;
+        if (!ok) return `<a class="broken" title="битая ссылка">${escapeHtml(label)}</a>`;
         return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
       }).join('');
+      const more = hidden.length
+        ? `<details class="more-sources"><summary>ещё ${hidden.length}</summary><div class="sources">${hidden.map(it => {
+            const label = it.source || (it.link || '').replace(/^https?:\/\//, '').split('/')[0];
+            return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+          }).join('')}</div></details>`
+        : '';
       const when = e.updated_at ? new Date(e.updated_at).toLocaleString('ru-RU') : '';
       return `<article class="event" data-id="${e.id}">
-        <div class="meta"><span>${when}</span><span>источников: ${e.sources_count ?? 1}</span></div>
+        <div class="meta"><span>${when}</span><span>новостей в событии: ${e.sources_count ?? 1}</span></div>
         <div class="summary">${escapeHtml(e.summary)}</div>
-        <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}${renderTags(e.tags)}</div>
+        <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}${more}${renderTags(e.tags)}</div>
         <details class="similar-panel">
           <summary>Похожие события и новости</summary>
           <div class="similar-body"><div class="meta">Загрузка…</div></div>

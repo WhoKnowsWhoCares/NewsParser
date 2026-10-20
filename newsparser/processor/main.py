@@ -185,6 +185,10 @@ async def process_item(
         event_id=event_id,
     )
 
+    # filtered-out items have no event: nothing to refresh in the cache
+    if event_id is None:
+        return
+
     # refresh this event's entry in the redis latest-events cache (web page)
     event_row = await db.get_event(event_id)
     sources = await db.event_sources(event_id)

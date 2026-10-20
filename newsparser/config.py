@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     model_keeper_evict: str = ""
 
     # dedup
-    dedup_threshold: float = 0.85  # cosine similarity above -> same event
+    # cosine similarity above -> same event. 0.75 keeps near-duplicate topics
+    # as one card (224 events for 469 news was too fragmented at 0.85).
+    dedup_threshold: float = 0.75
 
     # category filter (applied after LLM tagging; comma-separated).
     # Empty = keep everything. An event whose category is NOT in the list
