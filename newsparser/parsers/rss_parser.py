@@ -20,14 +20,18 @@ from newsparser.redis_queue import push_news
 
 # source domain -> (rss url, css selector for full text on article page)
 RSS_SOURCES = {
+    # (rss url, css selector for full text). Empty selector = use the RSS
+    # summary only (full-text fetch brought too much irrelevant content).
     "www.ria.ru": (
         "https://ria.ru/export/rss2/archive/index.xml",
-        "div.article__text",
+        "",
     ),
 }
 
 
 async def fetch_text(session: aiohttp.ClientSession, link: str, css_selector: str) -> str:
+    if not css_selector:
+        return ""  # no selector: skip the article fetch, use the RSS summary
     try:
         async with session.get(link, headers=BROWSER_HEADERS) as resp:
             resp.raise_for_status()

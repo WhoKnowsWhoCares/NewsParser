@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gemma-4-E4B-it-GGUF"
     embeddings_base_url: str = ""  # empty -> same as llm_base_url
-    embeddings_model: str = "unsloth/embeddinggemma-2-GGUF"
-    embed_dim: int = 768
+    embeddings_model: str = "qwen/qwen3-embedding-8b"
+    embed_dim: int = 4096
 
     # openrouter fallback for CHAT only (activated when openrouter_api_key is set).
     # Embeddings never fall back: vectors from different models are incomparable.
@@ -65,7 +65,10 @@ class Settings(BaseSettings):
     # telegram parsing (user api)
     api_id: int = 0
     api_hash: str = ""
-    telegram_channels: str = "interfaxonline,rbc_news,rian_ru,prime1,bcs_express"
+    telegram_channels: str = (
+        "interfaxonline,rbc_news,rian_ru,prime1,bcs_express,"
+        "markettwits,if_market_news,thewallstreetpro,russianmacro,truecon,iticapital"
+    )
     # StringSession string; preferred for prod (secret management).
     # Empty -> fall back to the file-based newsparser.session volume.
     telethon_session: str = ""

@@ -90,6 +90,21 @@ class _EmbedEndpoint:
         self.proxy = None  # local endpoint: never proxied
 
 
+class _EmbedFallback:
+    """Same embedding model via OpenRouter — used when local embed is down.
+
+    Safe fallback: it serves the SAME model, so vectors remain comparable
+    (unlike falling back to a different embedding model).
+    """
+
+    def __init__(self, settings: Settings):
+        self.name = "openrouter"
+        self.base_url = settings.openrouter_base_url.rstrip("/")
+        self.api_key = settings.openrouter_api_key
+        self.embed_model = settings.embeddings_model
+        self.proxy = settings.tg_proxy_url or None  # OpenRouter blocks some regions
+
+
 class LLMClient:
     """Chat with local -> openrouter fallback; embeddings local-only."""
 
@@ -104,6 +119,12 @@ class LLMClient:
             settings.llm_api_key,
             settings.embeddings_model,
         )
+        # same embedding model via OpenRouter when local embed fails
+        self._embed_fallback = (
+            _EmbedFallback(settings) if settings.openrouter_api_key else None
+        )
+        if not self._embed_fallback:
+            logger.warning("OpenRouter key not set: no embed fallback available")
         self._endpoints: list[_Endpoint] = [
             _Endpoint(
                 "local",
@@ -182,33 +203,40 @@ class LLMClient:
         raise RuntimeError(f"All LLM endpoints failed for chat: {last_err}")
 
     async def embed(self, text: str) -> list[float]:
-        """Embedding: local endpoint ONLY, never fall back to another provider.
+        """Embedding: local endpoint, falling back to the SAME model via OpenRouter.
 
-        Vectors from different embedding models are not comparable even at the
-        same dimension: mixing providers would corrupt cosine-similarity dedup
-        against previously stored vectors. If local is down, raise — the item
-        stays pending in redis and is retried when local recovers.
+        The fallback serves the identical embedding model with a truncated
+        (Matryoshka) dimension matching EMBED_DIM, so vectors remain comparable
+        with previously stored ones. If both fail, raise — the item stays
+        pending in redis and is retried later.
         """
-        ep = self._embed
+        eps: list = [self._embed]
+        if self._embed_fallback:
+            eps.append(self._embed_fallback)
+
         payload = {"input": text[:8000].strip() or "n/a"}
-        start = time.monotonic()
-        try:
-            data = await self._post(
-                ep,
-                "embeddings",
-                payload | {"model": ep.embed_model},
-            )
-        except Exception:
-            EMBED_FAILURES.inc()
-            raise
-        LLM_LATENCY.labels("embed", ep.name).observe(time.monotonic() - start)
-        embedding = data["data"][0]["embedding"]
-        if len(embedding) != self.settings.embed_dim:
-            logger.warning(
-                "Embedding dim mismatch ({}): got {}, expected {} (check EMBED_DIM)",
-                ep.name, len(embedding), self.settings.embed_dim,
-            )
-        return embedding
+        last_err: Exception | None = None
+        for ep in eps:
+            start = time.monotonic()
+            try:
+                req = payload | {"model": ep.embed_model}
+                if ep.name != "local":
+                    # hosted endpoint: truncate to EMBED_DIM explicitly
+                    req["dimensions"] = self.settings.embed_dim
+                data = await self._post(ep, "embeddings", req)
+                LLM_LATENCY.labels("embed", ep.name).observe(time.monotonic() - start)
+                embedding = data["data"][0]["embedding"]
+                if len(embedding) != self.settings.embed_dim:
+                    logger.warning(
+                        "Embedding dim mismatch ({}): got {}, expected {} (check EMBED_DIM)",
+                        ep.name, len(embedding), self.settings.embed_dim,
+                    )
+                return embedding
+            except Exception as e:  # noqa: BLE001 - try next provider
+                EMBED_FAILURES.inc()
+                last_err = e
+                logger.warning("Embed via {} failed: {}, trying fallback", ep.name, e)
+        raise RuntimeError(f"All embed endpoints failed: {last_err}")
 
     @staticmethod
     def _parse_summary_json(text: str) -> tuple[str, list[str]]:
