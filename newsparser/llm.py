@@ -101,7 +101,7 @@ class _EmbedFallback:
         self.name = "openrouter"
         self.base_url = settings.openrouter_base_url.rstrip("/")
         self.api_key = settings.openrouter_api_key
-        self.embed_model = settings.embeddings_model
+        self.embed_model = settings.openrouter_embed_model
         self.proxy = settings.tg_proxy_url or None  # OpenRouter blocks some regions
 
 

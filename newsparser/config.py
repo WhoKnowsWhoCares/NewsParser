@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "gemma-4-E4B-it-GGUF"
     embeddings_base_url: str = ""  # empty -> same as llm_base_url
-    embeddings_model: str = "qwen/qwen3-embedding-8b"
+    embeddings_model: str = "Qwen/Qwen3-Embedding-8B-GGUF"
     embed_dim: int = 4096
 
     # openrouter fallback for CHAT only (activated when openrouter_api_key is set).
@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_api_key: str = ""
     openrouter_chat_model: str = "google/gemini-2.5-flash-lite"
+    # same embedding model as local, under its OpenRouter id
+    openrouter_embed_model: str = "qwen/qwen3-embedding-8b"
 
     # model keeper: enforce our models being loaded+pinned on the local server.
     # Non-empty model_keeper_evict = comma-separated models to unload when
