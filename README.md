@@ -1,6 +1,6 @@
 # NewsParser — financial news aggregator
 
-Сбор новостей из RSS, сайтов и Telegram-каналов → очередь (Redis Streams) →
+Сбор новостей из сайтов и Telegram-каналов → очередь (Redis Streams) →
 обработка: дедупликация событий через pgvector + LLM-суммаризация →
 выдача через веб-страницу, REST API и Telegram-бота.
 
@@ -10,9 +10,9 @@
 
 | Service | What it does | External ports |
 |---|---|---|
-| `newsparser-collector` | RSS (RIA), site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors | none |
+| `newsparser-collector` | Site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors | none |
 | `newsparser-processor` | Consumes the stream (consumer group): link dedup → embed → nearest-event lookup in pgvector → new event (LLM summary) or update of an existing one (LLM merges details) → redis cache. Graceful degradation: when the embedder is down, items are saved with `embedding_stale` and backfilled later | none |
-| `newsparser-api` | FastAPI: `/api/events` (with `?tag=` filter), `/api/events/{id}`, `/api/events/{id}/similar` (vector similar), `/api/search` (full-text RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI with search, tag filters and a "Similar" section | **8003** (the only one) |
+| `newsparser-api` | FastAPI: `/api/events` (with `?tag=` / `?source=` filters), `/api/events/{id}`, `/api/events/{id}/similar` (vector similar), `/api/search` (full-text RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI with search, tag/source filters, market-impact badges and a "Similar" section | **8003** (the only one) |
 | `newsparser-tgbot` | Event delivery to subscribers, message editing on event updates, likes | none |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — events, news items, reactions, vector search (HNSW, cosine) | none |
 | `newsparser-redis` | `news:raw` queue (Streams, auto-trim) + latest-events cache `events:latest` | none |
@@ -26,13 +26,13 @@ Pipeline: `source → news:raw → processor → postgres (events) + redis cache
 
 - **Queue**: `QUEUE_MAX_LENGTH` cap enforced at the parsers (overflow → drop with a log); `STREAM_MAX_LEN` — stream retention (XTRIM).
 - **DB retention**: `DB_RETENTION_DAYS` — the processor daily prunes old news items and orphaned events.
-- **LLM fallback**: chat — local endpoint → OpenRouter (via proxy); embeddings — local only (vectors from different models are not comparable, fallback is intentionally absent). While the embedder is down, items accumulate in pending and are processed after recovery.
-- **Multilingual dedup**: the embedding model is multilingual — a Russian and an English news item about the same event match in a shared vector space (measured: RU text ↔ RU summary 0.95, EN text ↔ RU summary 0.91 against the 0.85 threshold). Summaries are always in Russian; the source language is kept in `news_items.language`. The cross-lingual margin above the threshold is thinner — adding EN sources may require threshold calibration.
+- **LLM fallback**: chat — local endpoint → OpenRouter (via proxy); embeddings — local → OpenRouter with the **same model** (`qwen/qwen3-embedding-8b` under its OR id, both paths produce comparable 4096-dim vectors). While the embedder is down, items accumulate in pending and are processed after recovery.
+- **Multilingual dedup**: the embedding model is multilingual — a Russian and an English news item about the same event match in a shared vector space (measured: RU text ↔ RU summary 0.95, EN text ↔ RU summary 0.91). Summaries are always in Russian; the source language is kept in `news_items.language`. The production threshold was calibrated on real data: 0.75.
 - **Healthchecks**: API — `/healthz` (real postgres/redis checks); processor and collector — heartbeat file (stale mtime → restart).
 - **Metrics**: Prometheus. API — `:8003/metrics`, workers — internal :9101/:9102. Processing/dedup counters, LLM latency, queue depth.
 - **Logs**: `LOG_FORMAT=json` — structured JSON logs (prod), plain text by default (dev). Daily rotation, 30-day retention.
 - **Backoff**: parsers double the poll interval on source errors (up to ×16).
-- **Model keeper**: `MODEL_KEEPER=1` — the processor checks every minute that the chat model and the embed model (`qwen/qwen3-embedding-8b`, 768) are loaded and pinned on the local LLM server, and restores them if evicted. Loads with `alongside: true` and a reduced context (8192/2048) so the models fit in VRAM simultaneously. `MODEL_KEEPER_EVICT` — foreign models to force-unload (usually empty: the VRAM manager swaps models on demand).
+- **Model keeper**: `MODEL_KEEPER=1` — the processor checks every minute that the chat model and the embed model (`Qwen/Qwen3-Embedding-8B-GGUF`, 4096-dim; served locally under this id) are loaded and pinned on the local LLM server, and restores them if evicted. Loads with `alongside: true` and a reduced context (8192/2048) so the models fit in VRAM simultaneously. `MODEL_KEEPER_EVICT` — foreign models to force-unload (usually empty: the VRAM manager swaps models on demand).
 
 ## Quick start
 
@@ -81,9 +81,10 @@ postgres/redis containers with the schema from the template (`EMBED_DIM=8`).
 
 All parameters live in `.env` (see `.env_template`). Key ones:
 
-- `DEDUP_THRESHOLD` — cosine similarity threshold for merging events (default 0.85);
+- `DEDUP_THRESHOLD` — cosine similarity threshold for merging events (production: 0.75);
 - `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL` — OpenAI-compatible endpoints (local models);
-- `OPENROUTER_API_KEY` — fallback key for the chat model (embeddings have no fallback);
+- `OPENROUTER_API_KEY` — fallback key for chat and embeddings (embeddings fall back to the same model under its OpenRouter id);
+- `OPENROUTER_EMBED_MODEL` — OpenRouter id of the embedding model (`qwen/qwen3-embedding-8b`);
 - `QUEUE_MAX_LENGTH` — queue cap at the parsers (0 = unlimited, production);
 - `STREAM_MAX_LEN` / `DB_RETENTION_DAYS` — stream and DB retention;
 - `POLL_INTERVAL` — source poll interval, seconds;
@@ -95,9 +96,12 @@ All parameters live in `.env` (see `.env_template`). Key ones:
 
 ## Sources (current)
 
-- RSS: [RIA Novosti](https://ria.ru/export/rss2/archive/index.xml)
-- Site: [BCS Express](https://bcs-express.ru)
-- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express
+- Site: [BCS Express](https://bcs-express.ru) (RSS disabled: the RIA feed
+  brought mostly irrelevant content — `RSS_SOURCES` in `rss_parser.py` is
+  empty; re-add finance feeds there to enable it again)
+- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express,
+  @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
+  @iticapital
 
 Adding a new source — a module in `newsparser/parsers/` + a record in
 `newsparser/parsers/main.py`.
@@ -114,8 +118,10 @@ Adding a new source — a module in `newsparser/parsers/` + a record in
 - [x] Similar-news search (vector) + full-text search over events
 - [x] Event categorization (tags + tickers, UI filters)
 - [x] Orphan-event backfill after embedder outages (auto-merge into nearest event)
-- [ ] New sources (RU/EN finance)
+- [x] New sources (RU finance: 6 Telegram channels added)
+- [x] Dedup threshold calibration on real data (0.75)
+- [x] Market-impact assessment (low/med/high badge per event card)
+- [x] Source filter in the UI (same UX as tag filters)
 - [ ] Targeted bot subscriptions by tag
-- [ ] Dedup threshold calibration on real data
 
 Documentation and plans: Obsidian, `AINotes/Documentation/NewsParser/`.

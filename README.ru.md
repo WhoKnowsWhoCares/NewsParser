@@ -1,6 +1,6 @@
 # NewsParser — агрегатор финансовых новостей
 
-Collects news from RSS, sites and Telegram channels → queue (Redis Streams) →
+Collects news from sites and Telegram channels → queue (Redis Streams) →
 processing: event deduplication via pgvector + LLM summarization →
 delivery via web page, REST API and Telegram bot.
 
@@ -10,9 +10,9 @@ delivery via web page, REST API and Telegram bot.
 
 | Сервис | Что делает | Внешние порты |
 |---|---|---|
-| `newsparser-collector` | RSS (РИА), парсинг сайта (BCS Express), Telegram-каналы (Telethon, user API). Кладут сырые новости в Redis Stream `news:raw`. Экспоненциальный backoff при ошибках источника | нет |
+| `newsparser-collector` | Парсинг сайта (BCS Express), Telegram-каналы (Telethon, user API). Кладут сырые новости в Redis Stream `news:raw`. Экспоненциальный backoff при ошибках источника | нет |
 | `newsparser-processor` | Берёт новости из потока (consumer group): дедуп по link → эмбеддинг → поиск ближайшего события в pgvector → новое событие (LLM-сводка) или обновление существующего (LLM вплетает детали) → кеш в Redis. Graceful degradation: если embedder недоступен, новость сохраняется с `embedding_stale` и досчитывается позже (backfill) | нет |
-| `newsparser-api` | FastAPI: `/api/events` (с фильтром `?tag=`), `/api/events/{id}`, `/api/events/{id}/similar` (векторный поиск похожих), `/api/search` (полнотекстовый RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс с поиском, фильтрами и блоком «Похожие» | **8003** (единственный) |
+| `newsparser-api` | FastAPI: `/api/events` (с фильтрами `?tag=` / `?source=`), `/api/events/{id}`, `/api/events/{id}/similar` (векторный поиск похожих), `/api/search` (полнотекстовый RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс с поиском, фильтрами по тегам/источникам, бейджами влияния на рынок и блоком «Похожие» | **8003** (единственный) |
 | `newsparser-tgbot` | Рассылка событий подписчикам, редактирование сообщения при обновлении события, сбор лайков | нет |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — события, новости, реакции, векторный поиск (HNSW, cosine) | нет |
 | `newsparser-redis` | Очередь `news:raw` (Streams, авто-trim) + кеш последних событий `events:latest` | нет |
@@ -26,13 +26,13 @@ delivery via web page, REST API and Telegram bot.
 
 - **Очередь**: cap `QUEUE_MAX_LENGTH` на стороне парсеров (переполнение → drop с логом); `STREAM_MAX_LEN` — ретенция стрима (XTRIM).
 - **Ретенция БД**: `DB_RETENTION_DAYS` — процессор раз в сутки удаляет старые новости и события-сироты.
-- **LLM fallback**: chat — локальный endpoint → OpenRouter (через прокси); embedding — только локальный (векторы разных моделей несравнимы, fallback намеренно отсутствует). При недоступности embedder'а новости копятся в pending и обрабатываются после восстановления.
-- **Мультиязычный дедуп**: эмбеддинг-модель мультиязычная — русская и английская новость об одном событии сопоставляются в общем векторном пространстве (замер: RU текст ↔ RU сводка 0.95, EN текст ↔ RU сводка 0.91 при пороге 0.85). Сводки всегда на русском, язык источника сохраняется в `news_items.language`. Зазор до порога у cross-lingual пар меньше — при добавлении EN-источников возможно потребуется калибровка порога.
+- **LLM fallback**: chat — локальный endpoint → OpenRouter (через прокси); embedding — локальный → OpenRouter, **та же модель** (`qwen/qwen3-embedding-8b` под её OR-id, оба пути дают сравнимые 4096-мерные векторы). При недоступности embedder'а новости копятся в pending и обрабатываются после восстановления.
+- **Мультиязычный дедуп**: эмбеддинг-модель мультиязычная — русская и английская новость об одном событии сопоставляются в общем векторном пространстве (замер: RU текст ↔ RU сводка 0.95, EN текст ↔ RU сводка 0.91). Сводки всегда на русском, язык источника сохраняется в `news_items.language`. Прод-порог подобран на реальных данных: 0.75.
 - **Healthchecks**: API — `/healthz` (реальные проверки postgres/redis); processor и collector — heartbeat-файл (stale mtime → restart).
 - **Метрики**: Prometheus. API — `:8003/metrics`, воркеры — внутренние :9101/:9102. Счётчики обработки, дедупа, латентность LLM, глубина очереди.
 - **Логи**: `LOG_FORMAT=json` — структурированные JSON-логи (prod), по умолчанию текстовые (dev). Ротация daily, retention 30 дней.
 - **Backoff**: парсеры удваивают интервал опроса при ошибках источника (до ×16).
-- **Model keeper**: `MODEL_KEEPER=1` — процессор каждую минуту проверяет, что chat-модель и embed-модель (`qwen/qwen3-embedding-8b`, 768) загружены и запинены на локальном LLM-сервере, восстанавливает при выгрузке. Загрузка с `alongside: true` и урезанным контекстом (8192/2048), чтобы модели помещались в VRAM одновременно. `MODEL_KEEPER_EVICT` — список чужих моделей для принудительной выгрузки (обычно пусто: VRAM-менеджер сам свапает модели по запросу).
+- **Model keeper**: `MODEL_KEEPER=1` — процессор каждую минуту проверяет, что chat-модель и embed-модель (`Qwen/Qwen3-Embedding-8B-GGUF`, 4096-мер; под этим id она обслуживается локально) загружены и запинены на локальном LLM-сервере, восстанавливает при выгрузке. Загрузка с `alongside: true` и урезанным контекстом (8192/2048), чтобы модели помещались в VRAM одновременно. `MODEL_KEEPER_EVICT` — список чужих моделей для принудительной выгрузки (обычно пусто: VRAM-менеджер сам свапает модели по запросу).
 
 ## Быстрый старт
 
@@ -81,9 +81,10 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 
 Все параметры — в `.env` (см. `.env_template`). Ключевые:
 
-- `DEDUP_THRESHOLD` — порог косинусной близости для склейки событий (по умолчанию 0.85);
+- `DEDUP_THRESHOLD` — порог косинусной близости для склейки событий (в проде: 0.75);
 - `LLM_BASE_URL` / `EMBEDDINGS_BASE_URL` — OpenAI-совместимые endpoints (локальные модели);
-- `OPENROUTER_API_KEY` — ключ fallback для chat-модели (embeddings без fallback);
+- `OPENROUTER_API_KEY` — ключ fallback для chat и embeddings (embeddings падают на ту же модель под её OpenRouter-id);
+- `OPENROUTER_EMBED_MODEL` — OpenRouter-id embedding-модели (`qwen/qwen3-embedding-8b`);
 - `QUEUE_MAX_LENGTH` — cap очереди на парсерах (0 = без лимита, прод);
 - `STREAM_MAX_LEN` / `DB_RETENTION_DAYS` — ретенция стрима и БД;
 - `POLL_INTERVAL` — период опроса источников, сек;
@@ -95,9 +96,12 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 
 ## Источники (текущие)
 
-- RSS: [РИА Новости](https://ria.ru/export/rss2/archive/index.xml)
-- Сайт: [BCS Express](https://bcs-express.ru)
-- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express
+- Сайт: [BCS Express](https://bcs-express.ru) (RSS отключён: фид РИА приносил
+  в основном нерелевантный контент — `RSS_SOURCES` в `rss_parser.py` пуст;
+  верните finance-фиды туда, чтобы снова включить)
+- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express,
+  @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
+  @iticapital
 
 Добавление нового источника — модуль в `newsparser/parsers/` + запись в
 `newsparser/parsers/main.py`.
@@ -114,8 +118,10 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - [x] Поиск по схожим новостям (векторный) + полнотекстовый поиск по событиям
 - [x] Категоризация событий (теги + тикеры, фильтры в UI)
 - [x] Дожим событий-сирот после простоя embedder'а (авто-мерж в ближайшее событие)
-- [ ] Новые источники (RU/EN финансы)
+- [x] Новые источники (RU-финансы: +6 Telegram-каналов)
+- [x] Калибровка порога дедупликации на реальных данных (0.75)
+- [x] Оценка влияния на рынок (бейдж low/med/high на карточке события)
+- [x] Фильтр по источнику в UI (тот же UX, что у фильтра по тегам)
 - [ ] Адресные подписки бота по тегам
-- [ ] Калибровка порога дедупликации на реальных данных
 
 Документация и планы: Obsidian, `AINotes/Documentation/NewsParser/`.
