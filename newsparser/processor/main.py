@@ -96,15 +96,17 @@ async def process_item(
             DEDUP_MATCHES.inc()
             logger.info("Matched event {} (similarity {:.3f}) for {}", event_id, similarity, link)
             event = await db.get_event(event_id)
-            merged, tags = await llm.summarize_merge(
-                event["summary"], title, text, tags=list(event["tags"] or [])
+            merged, tags, impact = await llm.summarize_merge(
+                event["summary"], title, text, tags=list(event["tags"] or []),
+                impact=event["impact"],
             )
             new_embedding = await llm.embed(merged)
             await db.update_event_summary(
-                event_id, summary=merged, embedding=new_embedding, tags=tags
+                event_id, summary=merged, embedding=new_embedding, tags=tags,
+                impact=impact,
             )
         else:
-            summary, tags = await llm.summarize_new_event(title, text)
+            summary, tags, impact = await llm.summarize_new_event(title, text)
             if not _category_allowed(tags):
                 logger.info("Category {} filtered out: {}", tags[:1], link)
                 ITEMS_PROCESSED.labels("filtered").inc()
@@ -136,13 +138,13 @@ async def process_item(
                 return
             merged_embedding = await llm.embed(summary)
             event_id = await db.create_event(
-                summary=summary, embedding=merged_embedding, tags=tags
+                summary=summary, embedding=merged_embedding, tags=tags, impact=impact
             )
             logger.info("New event {} created for {} [tags: {}]", event_id, link, tags)
         ITEMS_PROCESSED.labels("ok").inc()
     else:
         # no vector -> cannot dedup; still summarize so the event exists
-        summary, tags = await llm.summarize_new_event(title, text)
+        summary, tags, impact = await llm.summarize_new_event(title, text)
         if not _category_allowed(tags):
             logger.info("Category {} filtered out: {}", tags[:1], link)
             ITEMS_PROCESSED.labels("filtered").inc()
@@ -151,10 +153,12 @@ async def process_item(
             try:
                 merged_embedding = await llm.embed(summary)
                 event_id = await db.create_event(
-                    summary=summary, embedding=merged_embedding, tags=tags
+                    summary=summary, embedding=merged_embedding, tags=tags, impact=impact
                 )
             except Exception:  # noqa: BLE001 - event without vector, embed later too
-                event_id = await db.create_event(summary=summary, embedding=None, tags=tags)
+                event_id = await db.create_event(
+                    summary=summary, embedding=None, tags=tags, impact=impact
+                )
             logger.info(
                 "New event {} created for {} (no dedup: embedding failed) [tags: {}]",
                 event_id, link, tags,
@@ -276,13 +280,14 @@ async def merge_orphan_events(
                 continue
             # merge orphan summary into the surviving event: update first,
             # then re-point news and drop the orphan
-            merged, tags = await llm.summarize_merge(
+            merged, tags, impact = await llm.summarize_merge(
                 keep["summary"], row["summary"][:200], row["summary"],
-                tags=list(keep["tags"] or []),
+                tags=list(keep["tags"] or []), impact=keep["impact"],
             )
             merged_embedding = await llm.embed(merged)
             await db.update_event_summary(
-                keep_id, summary=merged, embedding=merged_embedding, tags=tags
+                keep_id, summary=merged, embedding=merged_embedding, tags=tags,
+                impact=impact,
             )
             await db.pool.execute(
                 "UPDATE news_items SET event_id = $2 WHERE event_id = $1",

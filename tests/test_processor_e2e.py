@@ -19,6 +19,7 @@ os.environ.update(
     EMBED_DIM=os.environ.get("TEST_EMBED_DIM", "8"),
     DEDUP_THRESHOLD="0.85",
     LLM_BASE_URL="http://mock",
+    ALLOWED_CATEGORIES="",
 )
 
 sys.path.insert(0, ".")
@@ -45,15 +46,22 @@ class MockLLM:
         v[-1] = 0.1
         return v
 
-    async def summarize_new_event(self, title: str, text: str) -> tuple[str, list[str]]:
+    async def summarize_new_event(
+        self, title: str, text: str
+    ) -> tuple[str, list[str], str]:
         self.calls.append(("new", title))
-        return f"Сводка (новое): {title}", ["ЭКОНОМИКА"]
+        return f"Сводка (новое): {title}", ["ЭКОНОМИКА"], "med"
 
     async def summarize_merge(
-        self, summary: str, title: str, text: str, tags: list[str] | None = None
-    ) -> tuple[str, list[str]]:
+        self,
+        summary: str,
+        title: str,
+        text: str,
+        tags: list[str] | None = None,
+        impact: str = "low",
+    ) -> tuple[str, list[str], str]:
         self.calls.append(("merge", title))
-        return f"{summary} + деталь от {title}", (tags or []) + ["ТЕСТ"]
+        return f"{summary} + деталь от {title}", (tags or []) + ["ТЕСТ"], impact
 
 
 async def main() -> None:

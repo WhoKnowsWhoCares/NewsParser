@@ -25,6 +25,7 @@ os.environ.update(
     EMBED_DIM=os.environ.get("TEST_EMBED_DIM", "8"),
     DEDUP_THRESHOLD="0.85",
     LLM_BASE_URL="http://mock",
+    ALLOWED_CATEGORIES="",
 )
 
 sys.path.insert(0, ".")

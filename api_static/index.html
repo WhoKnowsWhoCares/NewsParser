@@ -24,7 +24,18 @@
     .event {
       background: var(--card); border: 1px solid var(--border); border-radius: 12px;
       padding: 16px 18px;
+      position: relative;
     }
+    /* market-impact badge, top-right corner of the card */
+    .event .impact {
+      position: absolute; top: 12px; right: 14px;
+      font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+      padding: 2px 9px; border-radius: 999px; text-transform: uppercase;
+    }
+    .event .impact.low  { color: var(--muted); border: 1px solid var(--border); }
+    .event .impact.med  { color: #e6b450; border: 1px solid color-mix(in srgb, #e6b450 55%, transparent); }
+    .event .impact.high { color: #ff7b7b; border: 1px solid color-mix(in srgb, #ff7b7b 55%, transparent);
+                          background: color-mix(in srgb, #ff7b7b 12%, transparent); }
     .event .summary { margin: 6px 0 10px; }
     .meta { color: var(--muted); font-size: 0.82rem; display: flex; gap: 12px; flex-wrap: wrap; }
     .sources { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
@@ -101,6 +112,9 @@
       content: " " attr(data-count); opacity: 0.55; font-size: 0.7rem;
     }
     .tag-filter button.tag.active { color: #fff; }
+    /* source filter chips: same pill row, marker "◎" and no count suffix */
+    .tag-filter button.tag.source::before { content: "◎ "; opacity: 0.6; }
+    .tag-filter button.tag.source::after { content: ""; }
 
     /* metrics dashboard */
     details.metrics-panel { max-width: 780px; margin: 0 auto 20px;
@@ -136,6 +150,7 @@
     </table>
   </details>
   <div class="tag-filter" id="tag-filter"></div>
+  <div class="tag-filter" id="source-filter"></div>
   <div class="search-row">
     <input id="search-input" type="search" placeholder="Поиск по событиям…"
            autocomplete="off">
@@ -154,6 +169,7 @@
 
     const TICKER_RE = /^[A-Z0-9]{2,6}$/;
     let activeTag = '';
+    let activeSource = '';
 
     function tagChip(tag) {
       const cls = TICKER_RE.test(tag) ? 'ticker' : 'cat';
@@ -184,7 +200,10 @@
           }).join('')}</div></details>`
         : '';
       const when = e.updated_at ? new Date(e.updated_at).toLocaleString('ru-RU') : '';
+      const impact = (e.impact || 'low').toLowerCase();
+      const impactTitle = {low: 'низкое влияние на рынок', med: 'среднее влияние на рынок', high: 'высокое влияние на рынок'}[impact] || '';
       return `<article class="event" data-id="${e.id}">
+        <span class="impact ${impact}" title="${impactTitle}">${impact}</span>
         <div class="meta"><span>${when}</span><span>новостей в событии: ${e.sources_count ?? 1}</span></div>
         <div class="summary">${escapeHtml(e.summary)}</div>
         <div class="sources">${sources || '<span class="meta">нет ссылок</span>'}${more}${renderTags(e.tags)}</div>
@@ -221,7 +240,8 @@
     async function load() {
       try {
         const tagQ = activeTag ? `&tag=${encodeURIComponent(activeTag)}` : '';
-        const resp = await fetch('/api/events?limit=50' + tagQ);
+        const srcQ = activeSource ? `&source=${encodeURIComponent(activeSource)}` : '';
+        const resp = await fetch('/api/events?limit=50' + tagQ + srcQ);
         if (!resp.ok) throw new Error(resp.status);
         const data = await resp.json();
         updated.textContent = 'обновлено: ' + new Date().toLocaleTimeString('ru-RU');
@@ -251,11 +271,38 @@
       }
     }
 
+    // source filter chips: same pill row, driven by /api/sources event counts
+    async function loadSourcesFilter() {
+      const panel = document.getElementById('source-filter');
+      try {
+        const resp = await fetch('/api/sources');
+        if (!resp.ok) throw new Error(resp.status);
+        const data = await resp.json();
+        const withEvents = data.sources.filter(s => (s.events ?? 0) > 0);
+        if (!withEvents.length) { panel.innerHTML = ''; return; }
+        const chips = [];
+        if (activeSource) chips.push(`<button class="tag source active" data-source="">✕ сбросить: ${escapeHtml(activeSource)}</button>`);
+        chips.push(...withEvents.map(s =>
+          `<button class="tag source${s.source === activeSource ? ' active' : ''}" data-source="${escapeHtml(s.source)}" data-count="${s.events}">${escapeHtml(s.source)}</button>`
+        ));
+        panel.innerHTML = chips.join(' ');
+      } catch (err) {
+        panel.innerHTML = '';
+      }
+    }
+
     document.getElementById('tag-filter').addEventListener('click', e => {
       const btn = e.target.closest('.tag');
       if (!btn) return;
       activeTag = btn.dataset.tag === activeTag ? '' : btn.dataset.tag;
       loadTags();
+      load();
+    });
+    document.getElementById('source-filter').addEventListener('click', e => {
+      const btn = e.target.closest('.tag');
+      if (!btn) return;
+      activeSource = btn.dataset.source === activeSource ? '' : btn.dataset.source;
+      loadSourcesFilter();
       load();
     });
     feed.addEventListener('click', e => {
@@ -530,6 +577,7 @@
     load();
     loadSources();
     loadTags();
+    loadSourcesFilter();
     loadMetrics();
     setInterval(() => { if (!searchMode) load(); }, 30000);
     setInterval(loadSources, 60000);

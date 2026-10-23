@@ -88,15 +88,16 @@ MAX_PAGE_EVENTS = 50  # hard cap on events per page regardless of the query para
 
 
 @app.get("/api/events")
-async def events(limit: int = 50, tag: str = ""):
+async def events(limit: int = 50, tag: str = "", source: str = ""):
     """Latest events: try redis cache first, fall back to postgres.
 
-    tag: optional exact tag filter (case-insensitive) — cache path filters
-    in memory, db path filters in SQL.
+    tag: optional exact tag filter (case-insensitive). source: optional
+    exact news-source filter (same UX). Cache path serves only unfiltered
+    requests; filtered ones go straight to postgres.
     """
     settings = get_settings()
     limit = max(1, min(limit, MAX_PAGE_EVENTS, settings.redis_latest_max))
-    if not tag:
+    if not tag and not source:
         try:
             raw = await redis_client.hgetall(settings.redis_latest_key)
             items = [json.loads(v) for v in raw.values()]
@@ -105,7 +106,7 @@ async def events(limit: int = 50, tag: str = ""):
                 return {"events": items[:limit], "source": "cache"}
         except Exception:
             pass
-    rows = await db.latest_events(limit=limit, tag=tag or None)
+    rows = await db.latest_events(limit=limit, tag=tag or None, source=source or None)
     return {"events": rows, "source": "db"}
 
 
@@ -187,12 +188,7 @@ async def sources():
         ORDER BY source_type, source
         """
     )
-    configured = [
-        {
-            "source_type": "rss",
-            "source": "www.ria.ru",
-            "url": "https://ria.ru/export/rss2/archive/index.xml",
-        },
+    configured: list[dict] = [
         {
             "source_type": "site",
             "source": "www.bcs-express.ru",
@@ -204,6 +200,8 @@ async def sources():
         for c in get_settings().channels
     ]
     stats = {(r["source_type"], r["source"]): dict(r) for r in rows}
+    # event counts per source (for the UI source filter chips)
+    event_counts = {r["source"]: r["n"] for r in await db.all_sources()}
     result = []
     for src in configured:
         s = stats.get((src["source_type"], src["source"]))
@@ -211,6 +209,7 @@ async def sources():
             **src,
             "items": s["items"] if s else 0,
             "last_parsed": s["last_parsed"].isoformat() if s else None,
+            "events": event_counts.get(src["source"], 0),
         })
     return {"sources": result}
 

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS events (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     tg_message_id BIGINT,
     tags          TEXT[] NOT NULL DEFAULT '{}',  -- category + tickers: 'ЦБ', 'SBER', ...
+    impact        TEXT NOT NULL DEFAULT 'low',   -- market impact: low | med | high
     fts           tsvector GENERATED ALWAYS AS (
                       to_tsvector('russian', coalesce(summary, '')) ||
                       to_tsvector('english', coalesce(summary, ''))

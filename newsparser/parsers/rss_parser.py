@@ -19,14 +19,9 @@ from newsparser.parsers.common import BROWSER_HEADERS, html_to_text
 from newsparser.redis_queue import push_news
 
 # source domain -> (rss url, css selector for full text on article page)
-RSS_SOURCES = {
-    # (rss url, css selector for full text). Empty selector = use the RSS
-    # summary only (full-text fetch brought too much irrelevant content).
-    "www.ria.ru": (
-        "https://ria.ru/export/rss2/archive/index.xml",
-        "",
-    ),
-}
+# Empty: the RIA feed brought too much irrelevant content; re-add entries
+# here (finance-focused feeds only) to enable the RSS parser again.
+RSS_SOURCES: dict[str, tuple[str, str]] = {}
 
 
 async def fetch_text(session: aiohttp.ClientSession, link: str, css_selector: str) -> str:

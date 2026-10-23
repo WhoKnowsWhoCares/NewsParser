@@ -215,15 +215,18 @@ class Database:
         summary: str,
         embedding: list[float] | None,
         tags: list[str] | None = None,
+        impact: str = "low",
     ) -> int:
         row = await self.pool.fetchrow(
             """
-            INSERT INTO events (summary, embedding, tags) VALUES ($1, $2, $3)
+            INSERT INTO events (summary, embedding, tags, impact)
+            VALUES ($1, $2, $3, $4)
             RETURNING id
             """,
             summary,
             embedding,
             tags or [],
+            impact,
         )
         return row["id"]
 
@@ -237,8 +240,9 @@ class Database:
         summary: str,
         embedding: list[float],
         tags: list[str] | None = None,
+        impact: str | None = None,
     ) -> None:
-        """Update summary + embedding; tags merge into the existing set."""
+        """Update summary + embedding; tags merge, impact takes the max."""
         await self.pool.execute(
             """
             UPDATE events
@@ -249,6 +253,10 @@ class Database:
                      FROM unnest(tags || $4::text[]) AS t),
                     '{}'
                 ),
+                impact = (SELECT CASE
+                              WHEN $5 = 'high' OR impact = 'high' THEN 'high'
+                              WHEN $5 = 'med' OR impact = 'med' THEN 'med'
+                              ELSE 'low' END),
                 sources_count = sources_count + 1,
                 updated_at = now()
             WHERE id = $1
@@ -257,6 +265,7 @@ class Database:
             summary,
             embedding,
             tags or [],
+            impact or "low",
         )
 
     async def set_tg_message(self, event_id: int, message_id: int) -> None:
@@ -343,29 +352,55 @@ class Database:
     # --- helpers for bootstrap / api ---
 
     async def latest_events(
-        self, limit: int = 30, tag: str | None = None
+        self,
+        limit: int = 30,
+        tag: str | None = None,
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Latest events, optionally filtered by a tag (exact, case-insensitive)."""
-        tag_filter = (
-            "WHERE $2 = '' OR EXISTS "
-            "(SELECT 1 FROM unnest(e.tags) t WHERE lower(t) = lower($2))"
-        )
+        """Latest events, optionally filtered by tag and/or news source.
+
+        Source filter matches the source string of any linked news item
+        (exact, case-insensitive) — same UX as the tag filter.
+        """
+        filters = [
+            "($2 = '' OR EXISTS "
+            "(SELECT 1 FROM unnest(e.tags) t WHERE lower(t) = lower($2)))",
+            # $3 = '' disables the source filter; keeping the clause always
+            # present keeps the asyncpg prepared-statement arity stable
+            "($3 = '' OR EXISTS (SELECT 1 FROM news_items n "
+            "WHERE n.event_id = e.id AND lower(n.source) = lower($3)))",
+        ]
+        where = "WHERE " + " AND ".join(filters)
         rows = await self.pool.fetch(
             f"""
             SELECT e.id, e.summary, e.sources_count, e.first_seen_at, e.updated_at,
-                   e.tg_message_id, e.tags,
+                   e.tg_message_id, e.tags, e.impact,
                    COALESCE(json_agg(json_build_object(
                         'title', n.title, 'source', n.source, 'link', n.link
                    )) FILTER (WHERE n.id IS NOT NULL), '[]') AS items
             FROM events e
             LEFT JOIN news_items n ON n.event_id = e.id
-            {tag_filter}
+            {where}
             GROUP BY e.id
             ORDER BY e.updated_at DESC
             LIMIT $1
             """,
             limit,
             tag or "",
+            (source or "").lower(),
+        )
+        return [dict(r) for r in rows]
+
+    async def all_sources(self) -> list[dict[str, Any]]:
+        """Distinct news sources with event counts, most used first."""
+        rows = await self.pool.fetch(
+            """
+            SELECT n.source AS source, count(DISTINCT n.event_id) AS n
+            FROM news_items n
+            WHERE n.source <> ''
+            GROUP BY n.source
+            ORDER BY n DESC, source
+            """
         )
         return [dict(r) for r in rows]
 

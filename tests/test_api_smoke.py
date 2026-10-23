@@ -15,6 +15,7 @@ os.environ.update(
     REDIS_HOST=os.environ.get("TEST_REDIS_HOST", "localhost"),
     REDIS_PORT=os.environ.get("TEST_REDIS_PORT", "6380"),
     EMBED_DIM=os.environ.get("TEST_EMBED_DIM", "8"),
+    ALLOWED_CATEGORIES="",
 )
 
 sys.path.insert(0, ".")
@@ -35,10 +36,10 @@ async def seed() -> None:
             return [1.0, 0.1, 0, 0, 0, 0, 0, 0.1]
 
         async def summarize_new_event(self, title, text):
-            return f"Сводка: {title}", ["ЭКОНОМИКА"]
+            return f"Сводка: {title}", ["ЭКОНОМИКА"], "med"
 
-        async def summarize_merge(self, summary, title, text, tags=None):
-            return f"{summary} (обновлено)", (tags or []) + ["ОБНОВЛЕНО"]
+        async def summarize_merge(self, summary, title, text, tags=None, impact="low"):
+            return f"{summary} (обновлено)", (tags or []) + ["ОБНОВЛЕНО"], impact
 
     settings = get_settings()
     db = Database(settings.pg_dsn)

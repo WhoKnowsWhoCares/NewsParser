@@ -28,8 +28,9 @@ NON_FINANCIAL = (
 )
 
 TAG_PROMPT_APPENDIX = (
-    "\n\nПосле сводки выдели теги и верни СТРОГО валидный JSON без markdown-обёрток:\n"
-    '{{"summary": "<сводка>", "tags": ["<тег>", ...]}}\n'
+    "\n\nПосле сводки выдели теги и оцени влияние на рынок ценных бумаг. "
+    "Верни СТРОГО валидный JSON без markdown-обёрток:\n"
+    '{{"summary": "<сводка>", "tags": ["<тег>", ...], "impact": "<low|med|high>"}}\n'
     "Правила тегов:\n"
     "- первый тег — одна категория. Для новостей о финансах и экономике — из "
     "списка: {categories}. Если новость НЕ про финансы/экономику (спорт, погода, "
@@ -41,7 +42,13 @@ TAG_PROMPT_APPENDIX = (
     " Роснефть → ROSN, ВТБ → VTBR, Магнит → MGNT, X5 → X5, "
     " Apple → AAPL, Microsoft → MSFT, Google/Alphabet → GOOGL, Amazon → AMZN, "
     " Meta → META, Tesla → TSLA, NVIDIA → NVDA); не более 5 тикеров;\n"
-    "- только то, что реально упомянуто; без пояснений внутри массива."
+    "- только то, что реально упомянуто; без пояснений внутри массива.\n"
+    "Правила impact (влияние на рынок ценных бумаг):\n"
+    '- "high" — решение ЦБ по ставке, санкции на крупных эмитентов, дефолты, '
+    "M&A гигантов, резкие движения ключевых цен (нефть/газ), кризисы;\n"
+    '- "med" — отчётности крупных компаний, изменения в отраслевом '
+    "регулировании, значимые макро-статистики;\n"
+    '- "low" — локальные/отраслевые новости без прямого влияния на котировки.'
 )
 
 SUMMARY_NEW_EVENT_PROMPT = (
@@ -239,11 +246,12 @@ class LLMClient:
         raise RuntimeError(f"All embed endpoints failed: {last_err}")
 
     @staticmethod
-    def _parse_summary_json(text: str) -> tuple[str, list[str]]:
-        """Extract (summary, tags) from a model reply; fall back to raw text.
+    def _parse_summary_json(text: str) -> tuple[str, list[str], str]:
+        """Extract (summary, tags, impact) from a model reply.
 
-        Models sometimes wrap JSON in ```json fences or prepend chatter —
-        find the outermost {...} and parse that.
+        Falls back to (raw text, [], "low") when the model ignored the JSON
+        contract. Models sometimes wrap JSON in ```json fences or prepend
+        chatter — find the outermost {...} and parse that.
         """
         text = text.strip()
         start, end = text.find("{"), text.rfind("}")
@@ -252,19 +260,24 @@ class LLMClient:
                 data = json.loads(text[start:end + 1])
                 summary = str(data.get("summary", "")).strip()
                 tags_raw = data.get("tags", [])
+                impact = str(data.get("impact", "low")).strip().lower()
+                if impact not in ("low", "med", "high"):
+                    impact = "low"
                 if summary and isinstance(tags_raw, list):
                     tags = [str(t).strip().upper() for t in tags_raw if str(t).strip()]
                     # cap: 1 category + tickers
-                    return summary, list(dict.fromkeys(tags))[:6]
+                    return summary, list(dict.fromkeys(tags))[:6], impact
             except json.JSONDecodeError:
                 pass
         # model ignored the JSON contract: treat the whole reply as summary
-        return text, []
+        return text, [], "low"
 
-    async def summarize_new_event(self, title: str, text: str) -> tuple[str, list[str]]:
-        """Summarize + tag a new event. Returns (summary, tags)."""
+    async def summarize_new_event(
+        self, title: str, text: str
+    ) -> tuple[str, list[str], str]:
+        """Summarize + tag a new event. Returns (summary, tags, impact)."""
         if not text:
-            return title, []
+            return title, [], "low"
         raw = await self.chat(
             SUMMARY_NEW_EVENT_PROMPT.format(
                 title=title, text=text, categories=CATEGORIES
@@ -273,9 +286,18 @@ class LLMClient:
         return self._parse_summary_json(raw)
 
     async def summarize_merge(
-        self, summary: str, title: str, text: str, tags: list[str] | None = None
-    ) -> tuple[str, list[str]]:
-        """Merge a new item into an existing event. Returns (summary, tags)."""
+        self,
+        summary: str,
+        title: str,
+        text: str,
+        tags: list[str] | None = None,
+        impact: str = "low",
+    ) -> tuple[str, list[str], str]:
+        """Merge a new item into an existing event. Returns (summary, tags, impact).
+
+        Impact: takes the max of the existing and the new assessment (a low
+        detail never downgrades a high-impact event).
+        """
         raw = await self.chat(
             SUMMARY_MERGE_PROMPT.format(
                 summary=summary,
@@ -285,8 +307,10 @@ class LLMClient:
                 categories=CATEGORIES,
             )
         )
-        new_summary, new_tags = self._parse_summary_json(raw)
+        new_summary, new_tags, new_impact = self._parse_summary_json(raw)
         if not new_tags and tags:
             # model dropped tags: keep the old ones
             new_tags = tags
-        return new_summary, new_tags
+        rank = {"low": 0, "med": 1, "high": 2}
+        final_impact = impact if rank.get(impact, 0) >= rank.get(new_impact, 0) else new_impact
+        return new_summary, new_tags, final_impact
