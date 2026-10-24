@@ -47,13 +47,22 @@ def proxy_url_from_env() -> str | None:
     return url or None
 
 
+IMPACT_LABELS = {"low": "🟢 low", "med": "🟡 med", "high": "🔴 high"}
+
+
 def format_event(event_row, likes: int, sources: list[dict]) -> str:
     summary = html.escape(event_row["summary"])
     links = " · ".join(
         f'<a href="{html.escape(s["link"])}">{html.escape(s["source"])}</a>'
         for s in sources[:5]
     )
-    parts = [summary]
+    # header: impact rank + category (first tag) + tickers/other tags
+    impact = (event_row.get("impact") or "low").lower()
+    header = IMPACT_LABELS.get(impact, impact)
+    tags = [t for t in (event_row.get("tags") or []) if t.strip()]
+    if tags:
+        header += " · " + " ".join(f"#{html.escape(t)}" for t in tags)
+    parts = [header, "", summary]
     if links:
         parts.append(f"\nИсточники: {links}")
     if event_row["sources_count"] > 1:
