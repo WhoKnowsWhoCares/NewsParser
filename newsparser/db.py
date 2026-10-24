@@ -286,7 +286,8 @@ class Database:
     async def events_updated_since(self, since: datetime, limit: int = 20) -> list[asyncpg.Record]:
         return await self.pool.fetch(
             """
-            SELECT id, summary, sources_count, first_seen_at, updated_at, tg_message_id
+            SELECT id, summary, sources_count, first_seen_at, updated_at, tg_message_id,
+                   tags, impact
             FROM events
             WHERE updated_at > $1
             ORDER BY updated_at DESC

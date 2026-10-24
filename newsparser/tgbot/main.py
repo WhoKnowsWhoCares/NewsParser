@@ -19,6 +19,11 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+)
+from telegram.ext import (
+    filters as tg_filters,
 )
 from telegram.request import HTTPXRequest
 
@@ -26,9 +31,13 @@ from newsparser.config import get_settings
 from newsparser.db import Database
 from newsparser.log_setup import setup_logging
 from newsparser.redis_queue import create_redis
+from newsparser.tgbot import filters as uf
 
 POLL_DELAY = 5.0
 SUBSCRIBERS_KEY = "tgbot:subscribers"
+
+# ConversationHandler states for the /filters dialog
+(FS_MENU, FS_WAIT_VALUE) = range(2)
 
 
 def proxy_url_from_env() -> str | None:
@@ -84,7 +93,26 @@ class Bot:
         self.app = builder.build()
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("stop", self.cmd_stop))
-        self.app.add_handler(CallbackQueryHandler(self.on_like))
+        filter_conv = ConversationHandler(
+            entry_points=[CommandHandler("filters", self.cmd_filters)],
+            states={
+                FS_MENU: [
+                    CallbackQueryHandler(self.on_filter_button, pattern=r"^fset:"),
+                ],
+                FS_WAIT_VALUE: [
+                    MessageHandler(
+                        tg_filters.TEXT & ~tg_filters.COMMAND, self.on_filter_value
+                    ),
+                    CallbackQueryHandler(self.on_filter_button, pattern=r"^fset:"),
+                ],
+            },
+            fallbacks=[CommandHandler("filters", self.cmd_filters)],
+            name="filters",
+            per_message=False,
+        )
+        self.app.add_handler(filter_conv)
+        # like handler last: fset: callbacks are taken by the conversation
+        self.app.add_handler(CallbackQueryHandler(self.on_like, pattern=r"^like:"))
         await self.app.initialize()
         await self.app.start()
         await self.app.updater.start_polling()
@@ -111,7 +139,8 @@ class Bot:
         await self.redis.sadd(SUBSCRIBERS_KEY, chat_id)
         await context.bot.send_message(
             chat_id,
-            "Привет! Буду присылать сводки финансовых новостей. "
+            "Привет! Буду присылать все новые сводки финансовых новостей.\n"
+            "/filters — настроить фильтры (источники, значимость, теги).\n"
             "/stop — отписаться.",
         )
 
@@ -119,6 +148,84 @@ class Bot:
         chat_id = update.effective_chat.id
         await self.redis.srem(SUBSCRIBERS_KEY, chat_id)
         await context.bot.send_message(chat_id, "Отписка выполнена. /start — вернуться.")
+
+    # --- /filters conversation ---
+
+    FILTER_BUTTONS = {
+        "sources": "📰 Источники",
+        "impact": "📈 Значимость",
+        "tags": "🏷 Теги",
+    }
+
+    def filters_menu_markup(self, current: dict[str, str]) -> InlineKeyboardMarkup:
+        rows = []
+        for field, label in self.FILTER_BUTTONS.items():
+            val = (current.get(field) or "").strip()
+            suffix = " ✅" if val else ""
+            rows.append([InlineKeyboardButton(label + suffix, callback_data=f"fset:{field}")])
+        rows.append([
+            InlineKeyboardButton("♻️ Сбросить всё", callback_data="fset:reset"),
+            InlineKeyboardButton("✖️ Закрыть", callback_data="fset:close"),
+        ])
+        return InlineKeyboardMarkup(rows)
+
+    async def cmd_filters(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        chat_id = update.effective_chat.id
+        current = await uf.load(self.redis, chat_id)
+        text = "Фильтры подписки:\n" + uf.summary_text(current) + (
+            "\n\nВыбери, что настроить:"
+        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text, reply_markup=self.filters_menu_markup(current)
+            )
+        else:
+            await context.bot.send_message(
+                chat_id, text, reply_markup=self.filters_menu_markup(current)
+            )
+        return FS_MENU
+
+    async def on_filter_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        query = update.callback_query
+        await query.answer()
+        chat_id = query.message.chat.id
+        action = query.data.split(":", 1)[1]
+        if action == "close":
+            await query.edit_message_text("Настройки сохранены. /filters — открыть снова.")
+            return ConversationHandler.END
+        if action == "reset":
+            await uf.clear(self.redis, chat_id)
+            return await self.cmd_filters(update, context)
+        context.user_data["filter_field"] = action
+        hints = {
+            "sources": "Перечисли источники через запятую (например: markettwits, rbc_news). "
+                       "«все» — отключить фильтр.",
+            "impact": "Минимальная значимость для рынка:\nlow, med или high («все» — без фильтра).",
+            "tags": "Теги через запятую (ЦБ, SBER, САНКЦИИ).\n«все» — без фильтра.",
+        }
+        await query.message.reply_text(hints[action])
+        return FS_WAIT_VALUE
+
+    async def on_filter_value(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        chat_id = update.effective_chat.id
+        field = context.user_data.get("filter_field")
+        if field not in uf.FIELDS:
+            await update.message.reply_text("Не понял поле. /filters — начать заново.")
+            return ConversationHandler.END
+        ok, value = uf.parse_set_value(field, update.message.text or "")
+        if not ok:
+            await update.message.reply_text(f"Не понял: {value}. Попробуй ещё раз.")
+            return FS_WAIT_VALUE
+        current = await uf.load(self.redis, chat_id)
+        current[field] = value
+        await uf.save(self.redis, chat_id, current)
+        await update.message.reply_text("Сохранил ✅")
+        # re-open the menu with fresh state
+        text = "Фильтры подписки:\n" + uf.summary_text(current) + "\n\nВыбери, что настроить:"
+        await context.bot.send_message(
+            chat_id, text, reply_markup=self.filters_menu_markup(current)
+        )
+        return FS_MENU
 
     # --- likes ---
 
@@ -142,12 +249,25 @@ class Bot:
         if rows:
             self.last_check = max(r["updated_at"] for r in rows)
         subscribers = await self.subscribers()
+        if not subscribers:
+            return
+        # per-subscriber filters: chat_id -> filters dict (lazy, cached per poll)
+        user_filters: dict[int, dict[str, str]] = {}
         for row in rows:
             event_id = row["id"]
             likes = await self.db.likes_count(event_id)
             sources = await self.db.event_sources(event_id)
             text = format_event(row, likes, sources)
+            event_ctx = {
+                "sources": [s["source"] for s in sources],
+                "tags": list(row.get("tags") or []),
+                "impact": row.get("impact") or "low",
+            }
             for chat_id in subscribers:
+                if chat_id not in user_filters:
+                    user_filters[chat_id] = await uf.load(self.redis, chat_id)
+                if not uf.matches(user_filters[chat_id], event_ctx):
+                    continue
                 try:
                     sent_for_chat = self.sent.get(chat_id, {})
                     msg_id = sent_for_chat.get(event_id)
