@@ -13,7 +13,7 @@
 | `newsparser-collector` | Site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors | none |
 | `newsparser-processor` | Consumes the stream (consumer group): link dedup → embed → nearest-event lookup in pgvector → new event (LLM summary) or update of an existing one (LLM merges details) → redis cache. Graceful degradation: when the embedder is down, items are saved with `embedding_stale` and backfilled later | none |
 | `newsparser-api` | FastAPI: `/api/events` (with `?tag=` / `?source=` filters), `/api/events/{id}`, `/api/events/{id}/similar` (vector similar), `/api/search` (full-text RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI with search, tag/source filters, market-impact badges and a "Similar" section | **8003** (the only one) |
-| `newsparser-tgbot` | Event delivery to subscribers, message editing on event updates, likes | none |
+| `newsparser-tgbot` | Event delivery to subscribers with per-user filters (`/filters`: sources, market impact, tags — stored in redis; new subscribers get everything), message editing on event updates, likes, message header with impact mark + tags + source links | none |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — events, news items, reactions, vector search (HNSW, cosine) | none |
 | `newsparser-redis` | `news:raw` queue (Streams, auto-trim) + latest-events cache `events:latest` | none |
 
@@ -122,6 +122,7 @@ Adding a new source — a module in `newsparser/parsers/` + a record in
 - [x] Dedup threshold calibration on real data (0.75)
 - [x] Market-impact assessment (low/med/high badge per event card)
 - [x] Source filter in the UI (same UX as tag filters)
-- [ ] Targeted bot subscriptions by tag
+- [x] Targeted bot subscriptions by tag (per-user filters: sources, impact, tags)
+- [ ] Bot subscriptions by category digests / digest mode
 
 Documentation and plans: Obsidian, `AINotes/Documentation/NewsParser/`.
