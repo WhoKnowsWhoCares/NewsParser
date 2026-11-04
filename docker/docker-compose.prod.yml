@@ -1,0 +1,144 @@
+# Production compose: pulls pre-built images from ghcr.io instead of building.
+# Usage:
+#   cp .env_template .env   # fill in secrets
+#   docker compose -f docker/docker-compose.prod.yml up -d
+#
+# Images: ghcr.io/whoknowswhocares/newsparser-{api,collector,processor,tgbot}
+# Built by .github/workflows/docker-publish.yml on pushes to the `prod` branch.
+
+name: newsparser-prod
+
+services:
+  newsparser-postgres:
+    image: pgvector/pgvector:pg17
+    container_name: news_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-newsparser}
+      POSTGRES_USER: ${DB_USER:-newsparser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-newsparser}
+      # schema init reads this (01_schema.sh): must match the embeddings model
+      EMBED_DIM: ${EMBED_DIM:-4096}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-newsparser} -d ${DB_NAME:-newsparser}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  newsparser-redis:
+    image: redis:7-alpine
+    container_name: news_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  newsparser-collector:
+    image: ghcr.io/whoknowswhocares/newsparser-collector:latest
+    container_name: news_parsers
+    restart: unless-stopped
+    command: ["python", "-m", "newsparser.parsers.main"]
+    env_file: ../.env
+    depends_on:
+      newsparser-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/liveness_collector 2>/dev/null || date +%s) )) -lt 180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  newsparser-processor:
+    image: ghcr.io/whoknowswhocares/newsparser-processor:latest
+    container_name: news_processor
+    restart: unless-stopped
+    command: ["python", "-m", "newsparser.processor.main"]
+    env_file: ../.env
+    depends_on:
+      newsparser-redis:
+        condition: service_healthy
+      newsparser-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/liveness_processor 2>/dev/null || date +%s) )) -lt 180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  newsparser-api:
+    image: ghcr.io/whoknowswhocares/newsparser-api:latest
+    container_name: news_api
+    restart: unless-stopped
+    command: ["uvicorn", "newsparser.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # the only externally exposed service: web page + API
+    ports:
+      - "${API_PORT:-8003}:8000"
+    env_file: ../.env
+    depends_on:
+      newsparser-redis:
+        condition: service_healthy
+      newsparser-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5); sys.exit(0 if r.status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  newsparser-tgbot:
+    image: ghcr.io/whoknowswhocares/newsparser-tgbot:latest
+    container_name: news_tgbot
+    restart: unless-stopped
+    command: ["python", "-m", "newsparser.tgbot.main"]
+    env_file: ../.env
+    depends_on:
+      newsparser-redis:
+        condition: service_healthy
+      newsparser-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/liveness_tgbot 2>/dev/null || date +%s) )) -lt 180"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  newsparser-dbbackup:
+    image: postgres:17-alpine
+    container_name: news_dbbackup
+    restart: unless-stopped
+    # nightly pg_dump (02:30 UTC) into the backups volume, keep last 14
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-newsparser}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          ts=$$(date +%Y%m%d_%H%M)
+          echo "[backup] start $$ts"
+          pg_dump -h newsparser-postgres -U ${DB_USER:-newsparser} -d ${DB_NAME:-newsparser} \
+            -Fc -f "/backups/newsparser_$$ts.dump" && echo "[backup] ok" || echo "[backup] FAILED"
+          ls -1t /backups/newsparser_*.dump 2>/dev/null | tail -n +15 | xargs -r rm -f
+          sleep 86400
+        done
+    volumes:
+      - dbbackups:/backups
+    depends_on:
+      newsparser-postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  dbbackups:

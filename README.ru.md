@@ -38,6 +38,21 @@ delivery via web page, REST API and Telegram bot.
 
 ## Быстрый старт
 
+### Прод (готовые образы из ghcr.io)
+
+```bash
+git clone https://github.com/whoknowswhocares/NewsParser
+cd NewsParser
+cp .env_template .env          # заполнить секреты (api_id/api_hash, bot_token, LLM-ключи)
+docker compose -f docker/docker-compose.prod.yml up -d
+# веб: http://localhost:8003
+```
+
+Образы `ghcr.io/whoknowswhocares/newsparser-{api,collector,processor,tgbot}`
+собираются CI при каждом пуше в ветку `prod` (а также на тегах `v*`).
+
+### Разработка (сборка локально)
+
 ```bash
 cp .env_template .env          # заполнить api_id/api_hash, bot_token
 docker compose -f docker/docker-compose.yml up -d --build

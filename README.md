@@ -38,6 +38,21 @@ Pipeline: `source → news:raw → processor → postgres (events) + redis cache
 
 ## Quick start
 
+### Production (pre-built images from ghcr.io)
+
+```bash
+git clone https://github.com/whoknowswhocares/NewsParser
+cd NewsParser
+cp .env_template .env          # fill in secrets (api_id/api_hash, bot_token, LLM keys)
+docker compose -f docker/docker-compose.prod.yml up -d
+# web: http://localhost:8003
+```
+
+Images `ghcr.io/whoknowswhocares/newsparser-{api,collector,processor,tgbot}`
+are built by CI on every push to the `prod` branch (also on `v*` tags).
+
+### Development (build locally)
+
 ```bash
 cp .env_template .env          # fill in api_id/api_hash, bot_token
 docker compose -f docker/docker-compose.yml up -d --build
