@@ -13,7 +13,7 @@ delivery via web page, REST API and Telegram bot.
 | `newsparser-collector` | Парсинг сайта (BCS Express), Telegram-каналы (Telethon, user API). Кладут сырые новости в Redis Stream `news:raw`. Экспоненциальный backoff при ошибках источника | нет |
 | `newsparser-processor` | Берёт новости из потока (consumer group): дедуп по link → эмбеддинг → поиск ближайшего события в pgvector → новое событие (LLM-сводка) или обновление существующего (LLM вплетает детали) → кеш в Redis. Graceful degradation: если embedder недоступен, новость сохраняется с `embedding_stale` и досчитывается позже (backfill) | нет |
 | `newsparser-api` | FastAPI: `/api/events` (с фильтрами `?tag=` / `?source=`), `/api/events/{id}`, `/api/events/{id}/similar` (векторный поиск похожих), `/api/search` (полнотекстовый RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), одностраничный веб-интерфейс с поиском, фильтрами по тегам/источникам, бейджами влияния на рынок и блоком «Похожие» | **8003** (единственный) |
-| `newsparser-tgbot` | Рассылка событий подписчикам с персональными фильтрами (`/filters`: источники, значимость для рынка, теги — хранятся в redis; новые подписчики получают всё), редактирование сообщения при обновлении события, лайки, шапка сообщения с пометкой значимости + теги + источники | нет |
+| `newsparser-tgbot` | Рассылка событий подписчикам с персональными фильтрами (`/filters`: источники, значимость для рынка, теги — хранятся в redis; новые подписчики получают всё), редактирование сообщения при обновлении события, технические сообщения `[ALERT]` админу, шапка сообщения с пометкой значимости + теги + источники (лайки на паузе) | нет |
 | `newsparser-postgres` | pgvector/pgvector:pg17 — события, новости, реакции, векторный поиск (HNSW, cosine) | нет |
 | `newsparser-redis` | Очередь `news:raw` (Streams, авто-trim) + кеш последних событий `events:latest` | нет |
 
@@ -28,7 +28,9 @@ delivery via web page, REST API and Telegram bot.
 - **Ретенция БД**: `DB_RETENTION_DAYS` — процессор раз в сутки удаляет старые новости и события-сироты.
 - **LLM fallback**: chat — локальный endpoint → OpenRouter (через прокси); embedding — локальный → OpenRouter, **та же модель** (`qwen/qwen3-embedding-8b` под её OR-id, оба пути дают сравнимые 4096-мерные векторы). При недоступности embedder'а новости копятся в pending и обрабатываются после восстановления.
 - **Мультиязычный дедуп**: эмбеддинг-модель мультиязычная — русская и английская новость об одном событии сопоставляются в общем векторном пространстве (замер: RU текст ↔ RU сводка 0.95, EN текст ↔ RU сводка 0.91). Сводки всегда на русском, язык источника сохраняется в `news_items.language`. Прод-порог подобран на реальных данных: 0.75.
-- **Healthchecks**: API — `/healthz` (реальные проверки postgres/redis); processor и collector — heartbeat-файл (stale mtime → restart).
+- **Healthchecks**: API — `/healthz` (реальные проверки postgres/redis); processor, collector и tgbot — heartbeat-файл (stale mtime → restart).
+- **Бэкапы БД**: sidecar `newsparser-dbbackup` — nightly `pg_dump` (custom format) в volume, хранятся последние 14 дампов.
+- **Алерты админу**: `TG_BOT_ADMIN_CHAT` — бот шлёт технические сообщения с префиксом `[ALERT]` (backlog очереди >200, недоступность postgres/embedder; cooldown 1ч). Алерты, поднятые при лежащем боте, спулятся в redis и доставляются при старте.
 - **Метрики**: Prometheus. API — `:8003/metrics`, воркеры — внутренние :9101/:9102. Счётчики обработки, дедупа, латентность LLM, глубина очереди.
 - **Логи**: `LOG_FORMAT=json` — структурированные JSON-логи (prod), по умолчанию текстовые (dev). Ротация daily, retention 30 дней.
 - **Backoff**: парсеры удваивают интервал опроса при ошибках источника (до ×16).
@@ -99,7 +101,7 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - Сайт: [BCS Express](https://bcs-express.ru) (RSS отключён: фид РИА приносил
   в основном нерелевантный контент — `RSS_SOURCES` в `rss_parser.py` пуст;
   верните finance-фиды туда, чтобы снова включить)
-- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express,
+- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1,
   @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
   @iticapital
 

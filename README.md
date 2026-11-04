@@ -13,7 +13,7 @@
 | `newsparser-collector` | Site scraping (BCS Express), Telegram channels (Telethon, user API). Pushes raw news into the `news:raw` Redis Stream. Exponential backoff on source errors                                                                                                                                                                      | none                    |
 | `newsparser-processor` | Consumes the stream (consumer group): link dedup → embed → nearest-event lookup in pgvector → new event (LLM summary) or update of an existing one (LLM merges details) → redis cache. Graceful degradation: when the embedder is down, items are saved with `embedding_stale` and backfilled later                              | none                    |
 | `newsparser-api`       | FastAPI: `/api/events` (with `?tag=` / `?source=` filters), `/api/events/{id}`, `/api/events/{id}/similar` (vector similar), `/api/search` (full-text RU+EN), `/api/tags`, `/api/sources`, `/healthz`, `/metrics` (Prometheus), single-page web UI with search, tag/source filters, market-impact badges and a "Similar" section | **8003** (the only one) |
-| `newsparser-tgbot`     | Event delivery to subscribers with per-user filters (`/filters`: sources, market impact, tags — stored in redis; new subscribers get everything), message editing on event updates, likes, message header with impact mark + tags + source links                                                                                 | none                    |
+| `newsparser-tgbot`     | Event delivery to subscribers with per-user filters (`/filters`: sources, market impact, tags — stored in redis; new subscribers get everything), message editing on event updates, `[ALERT]` technical messages to the admin, message header with impact mark + tags + source links (likes are on hold)                                                                                      | none                    |
 | `newsparser-postgres`  | pgvector/pgvector:pg17 — events, news items, reactions, vector search (HNSW, cosine)                                                                                                                                                                                                                                             | none                    |
 | `newsparser-redis`     | `news:raw` queue (Streams, auto-trim) + latest-events cache `events:latest`                                                                                                                                                                                                                                                      | none                    |
 
@@ -28,7 +28,9 @@ Pipeline: `source → news:raw → processor → postgres (events) + redis cache
 - **DB retention**: `DB_RETENTION_DAYS` — the processor daily prunes old news items and orphaned events.
 - **LLM fallback**: chat — local endpoint → OpenRouter (via proxy); embeddings — local → OpenRouter with the **same model** (`qwen/qwen3-embedding-8b` under its OR id, both paths produce comparable 4096-dim vectors). While the embedder is down, items accumulate in pending and are processed after recovery.
 - **Multilingual dedup**: the embedding model is multilingual — a Russian and an English news item about the same event match in a shared vector space (measured: RU text ↔ RU summary 0.95, EN text ↔ RU summary 0.91). Summaries are always in Russian; the source language is kept in `news_items.language`. The production threshold was calibrated on real data: 0.75.
-- **Healthchecks**: API — `/healthz` (real postgres/redis checks); processor and collector — heartbeat file (stale mtime → restart).
+- **Healthchecks**: API — `/healthz` (real postgres/redis checks); processor, collector and tgbot — heartbeat file (stale mtime → restart).
+- **DB backups**: `newsparser-dbbackup` sidecar — nightly `pg_dump` (custom format) into a dedicated volume, keeps the last 14 dumps.
+- **Admin alerts**: `TG_BOT_ADMIN_CHAT` — the bot sends technical messages prefixed `[ALERT]` (queue backlog >200, postgres/embedder unreachable; 1h cooldown). Alerts raised while the bot is down are spooled in redis and delivered on start.
 - **Metrics**: Prometheus. API — `:8003/metrics`, workers — internal :9101/:9102. Processing/dedup counters, LLM latency, queue depth.
 - **Logs**: `LOG_FORMAT=json` — structured JSON logs (prod), plain text by default (dev). Daily rotation, 30-day retention.
 - **Backoff**: parsers double the poll interval on source errors (up to ×16).
@@ -99,7 +101,7 @@ All parameters live in `.env` (see `.env_template`). Key ones:
 - Site: [BCS Express](https://bcs-express.ru) (RSS disabled: the RIA feed
   brought mostly irrelevant content — `RSS_SOURCES` in `rss_parser.py` is
   empty; re-add finance feeds there to enable it again)
-- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1, @bcs_express,
+- Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1,
   @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
   @iticapital
 
