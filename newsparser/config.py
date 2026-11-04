@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     api_id: int = 0
     api_hash: str = ""
     telegram_channels: str = (
-        "interfaxonline,rbc_news,rian_ru,prime1,bcs_express,"
+        "interfaxonline,rbc_news,rian_ru,prime1,"
         "markettwits,if_market_news,thewallstreetpro,russianmacro,truecon,iticapital"
     )
     # StringSession string; preferred for prod (secret management).
@@ -77,6 +77,8 @@ class Settings(BaseSettings):
 
     # telegram bot
     bot_token: str = ""
+    # technical alerts recipient: bot sends prefixed [ALERT] messages here
+    tg_bot_admin_chat: str = ""
     chat_id: str = ""  # dev subscriber
 
     # parsers

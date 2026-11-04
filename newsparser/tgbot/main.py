@@ -29,9 +29,10 @@ from telegram.request import HTTPXRequest
 
 from newsparser.config import get_settings
 from newsparser.db import Database
-from newsparser.log_setup import setup_logging
+from newsparser.log_setup import LivenessFile, setup_logging
 from newsparser.redis_queue import create_redis
 from newsparser.tgbot import filters as uf
+from newsparser.tgbot.alerts import AdminAlerter
 
 POLL_DELAY = 5.0
 SUBSCRIBERS_KEY = "tgbot:subscribers"
@@ -73,9 +74,9 @@ def format_event(event_row, likes: int, sources: list[dict]) -> str:
 
 
 def keyboard(event_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("👍 Нравится", callback_data=f"like:{event_id}")]]
-    )
+    # likes are disabled for now (feature on hold); keep the signature for
+    # the reactions pipeline — no buttons attached to messages
+    return InlineKeyboardMarkup([])
 
 
 class Bot:
@@ -126,11 +127,22 @@ class Bot:
         await self.app.start()
         await self.app.updater.start_polling()
         logger.info("Bot started")
+        liveness = LivenessFile("/tmp/liveness_tgbot", max_age_hint=180.0)
+        liveness.start(interval=20.0)
+        alerter_task = None
+        admin = self.settings.tg_bot_admin_chat.strip()
+        if admin:
+            alerter_task = asyncio.create_task(
+                AdminAlerter(self.settings.bot_token, admin).run()
+            )
         try:
             while True:
                 await self.poll_events()
                 await asyncio.sleep(POLL_DELAY)
         finally:
+            if alerter_task:
+                alerter_task.cancel()
+            await liveness.stop()
             await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()

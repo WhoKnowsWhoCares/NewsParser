@@ -188,13 +188,9 @@ async def sources():
         ORDER BY source_type, source
         """
     )
-    configured: list[dict] = [
-        {
-            "source_type": "site",
-            "source": "www.bcs-express.ru",
-            "url": "https://bcs-express.ru",
-        },
-    ]
+    # BCS Express site is behind a JS challenge — excluded from sources;
+    # re-add here when a working fetcher exists
+    configured: list[dict] = []
     configured += [
         {"source_type": "telegram", "source": c, "url": f"https://t.me/{c}"}
         for c in get_settings().channels
