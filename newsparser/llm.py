@@ -112,6 +112,22 @@ class _EmbedFallback:
         self.proxy = settings.tg_proxy_url or None  # OpenRouter blocks some regions
 
 
+def _matryoshka_truncate(vec: list[float], dim: int) -> list[float]:
+    """MRL truncation: keep the first `dim` components, renormalize.
+
+    Works regardless of what the endpoint returned (local server always
+    gives the full 4096; OR may honor `dimensions`). Both paths yield the
+    identical prefix -> comparable vectors.
+    """
+    if len(vec) == dim:
+        return vec
+    cut = vec[:dim]
+    norm = sum(x * x for x in cut) ** 0.5
+    if norm == 0:
+        return cut
+    return [x / norm for x in cut]
+
+
 class LLMClient:
     """Chat with local -> openrouter fallback; embeddings local-only."""
 
@@ -233,12 +249,12 @@ class LLMClient:
                 data = await self._post(ep, "embeddings", req)
                 LLM_LATENCY.labels("embed", ep.name).observe(time.monotonic() - start)
                 embedding = data["data"][0]["embedding"]
-                if len(embedding) != self.settings.embed_dim:
-                    logger.warning(
-                        "Embedding dim mismatch ({}): got {}, expected {} (check EMBED_DIM)",
-                        ep.name, len(embedding), self.settings.embed_dim,
+                if len(embedding) < self.settings.embed_dim:
+                    raise ValueError(
+                        f"Embedding too short from {ep.name}: "
+                        f"{len(embedding)} < {self.settings.embed_dim}"
                     )
-                return embedding
+                return _matryoshka_truncate(embedding, self.settings.embed_dim)
             except Exception as e:  # noqa: BLE001 - try next provider
                 EMBED_FAILURES.inc()
                 last_err = e

@@ -1,6 +1,8 @@
 -- NewsParser schema (Postgres + pgvector).
--- Embedding dimension is templated: EMBED_DIM (default 768) must match the
+-- Embedding dimension is templated: EMBED_DIM (default 2000) must match the
 -- embeddings model AND the EMBED_DIM env of the app.
+-- 2000 (qwen3-embedding-8b Matryoshka prefix): fits pgvector's 2000-dim
+-- HNSW/ivfflat index limit (full 4096 has NO index support).
 -- Local compose applies it via 01_schema.sh; CI pipes this file into psql
 -- with EMBED_DIM=8 (mock embedder in tests).
 CREATE EXTENSION IF NOT EXISTS vector;
