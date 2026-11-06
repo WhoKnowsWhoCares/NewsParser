@@ -377,22 +377,32 @@ async def main() -> None:
                 logger.warning("read_news failed ({}), retrying in 5s", e)
                 await asyncio.sleep(5)
                 continue
-            for msg_id, item in entries:
-                try:
-                    await process_item(db, llm, redis_client, settings, item)
-                except Exception as e:
-                    # do NOT ack: item stays pending and will be retried above
-                    ITEMS_FAILED.inc()
-                    logger.error(
-                        "Failed to process item {} (will retry): {}",
-                        item.get("link", "?"),
-                        e,
-                    )
-                    continue
-                await ack_news(redis_client, settings.redis_stream, str(msg_id))
+            # parallel processing: LLM calls dominate the latency; a small
+            # pool cuts the batch wall time roughly by the pool size (the
+            # hosted chat endpoint and llama-server both queue internally)
+            sem = asyncio.Semaphore(settings.processor_concurrency)
 
-            # gauges: queue depth + stale backfill backlog
-            QUEUE_LENGTH.set(await redis_client.xlen(settings.redis_stream))
+            async def _process_one(msg_id, item):
+                async with sem:
+                    try:
+                        await process_item(db, llm, redis_client, settings, item)
+                    except Exception as e:  # noqa: BLE001
+                        # do NOT ack: item stays pending and will be retried above
+                        ITEMS_FAILED.inc()
+                        logger.error(
+                            "Failed to process item {} (will retry): {}",
+                            item.get("link", "?"),
+                            e,
+                        )
+                        return
+                    await ack_news(redis_client, settings.redis_stream, str(msg_id))
+
+            await asyncio.gather(*(_process_one(mid, it) for mid, it in entries))
+
+            # gauges: queue depth (undelivered lag, NOT xlen — acked entries
+            # stay in the stream until the retention trim) + stale backlog
+            groups = await redis_client.xinfo_groups(settings.redis_stream)
+            QUEUE_LENGTH.set(int(groups[0].get("lag", 0) or 0) if groups else 0)
             stale_count = await db.stale_count()
             STALE_EMBEDDINGS.set(stale_count)
 

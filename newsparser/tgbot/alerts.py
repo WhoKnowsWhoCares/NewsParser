@@ -101,10 +101,17 @@ class AdminAlerter:
 
             redis = await create_redis(settings)
             try:
-                # queue depth: backlog growing means the processor is stuck
-                depth = await redis.xlen(settings.redis_stream)
-                if depth > 200 and not self._suppressed("queue"):
-                    problems.append(f"queue backlog: {depth} items in {settings.redis_stream}")
+                # real backlog: undelivered (lag) + delivered-but-unacked
+                # (pending). XLEN would count acked entries awaiting the
+                # retention trim — those are done and not a problem.
+                groups = await redis.xinfo_groups(settings.redis_stream)
+                lag = int(groups[0].get("lag", 0) or 0)
+                pending = int(groups[0].get("pending", 0) or 0)
+                backlog = max(lag, pending)
+                if backlog > 200 and not self._suppressed("queue"):
+                    problems.append(
+                        f"queue backlog: {backlog} unprocessed items in {settings.redis_stream}"
+                    )
                 # spool size: alerts piling up means the bot itself was down
             finally:
                 await redis.aclose()

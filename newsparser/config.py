@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     # queue cap: max items in redis stream (0 = unlimited).
     # Items beyond this are dropped by parsers before entering the queue.
     queue_max_length: int = 10
+    # parallel item processing inside the processor (LLM calls dominate latency)
+    processor_concurrency: int = 3
 
     # telegram parsing (user api)
     api_id: int = 0
