@@ -91,6 +91,7 @@ class Bot:
 
     async def start(self) -> None:
         await self.db.connect()
+        await self.db.ensure_schema(self.settings.embed_dim)
         self.redis = await create_redis(self.settings)
         builder = Application.builder().token(self.settings.bot_token)
         proxy = proxy_url_from_env()

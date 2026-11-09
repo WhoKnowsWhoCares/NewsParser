@@ -64,9 +64,9 @@ jobs:
         run: |
           docker run --rm --network host \
             -e PGPASSWORD=newsparser \
-            -v "${{ github.workspace }}/docker/db/init:/init:ro" \
+            -v "${{ github.workspace }}/newsparser:/src:ro" \
             pgvector/pgvector:pg17 \
-            sh -c 'sed "s/{EMBED_DIM}/8/g" /init/schema.sql.template | psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U newsparser -d newsparser_test'
+            sh -c 'sed "s/{EMBED_DIM}/8/g" /src/schema.sql.template | psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5434 -U newsparser -d newsparser_test'
 
       - name: Run e2e processor test
         run: uv run python tests/test_processor_e2e.py

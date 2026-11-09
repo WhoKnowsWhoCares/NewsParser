@@ -13,7 +13,6 @@ services:
     # no host ports: postgres reachable only inside the compose network
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-newsparser} -d ${DB_NAME:-newsparser}"]
       interval: 5s

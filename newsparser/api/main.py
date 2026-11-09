@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     db = Database(settings.pg_dsn)
     await db.connect()
+    await db.ensure_schema(get_settings().embed_dim)
     redis_client = await create_redis(settings)
     sync_task = asyncio.create_task(_periodic_cache_sync())
     yield

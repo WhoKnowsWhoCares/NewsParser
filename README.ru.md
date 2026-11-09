@@ -61,7 +61,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 # веб: http://localhost:8003
 ```
 
-При первом старте postgres создаёт схему (`docker/db/init/01_schema.sh`).
+Сервисы сами применяют схему при старте (идемпотентный `ensure_schema`, шаблон: `newsparser/schema.sql.template`).
 Размерность эмбеддингов задаётся `EMBED_DIM` и должна совпадать с моделью
 эмбеддингов; при смене модели нужно пересоздать volume `pgdata`.
 

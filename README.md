@@ -61,7 +61,7 @@ docker compose -f docker/docker-compose.yml up -d --build
 # web: http://localhost:8003
 ```
 
-Postgres creates the schema on first start (`docker/db/init/01_schema.sh`).
+Services self-apply the schema on startup (idempotent `ensure_schema`, template: `newsparser/schema.sql.template`).
 The embedding dimension is set by `EMBED_DIM` and must match the embedding
 model; when changing models, recreate the `pgdata` volume.
 

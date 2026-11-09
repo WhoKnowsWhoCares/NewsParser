@@ -330,6 +330,7 @@ async def main() -> None:
 
     db = Database(settings.pg_dsn)
     await db.connect()
+    await db.ensure_schema(settings.embed_dim)
 
     # fail fast on an EMBED_DIM / schema mismatch: inserts would otherwise
     # crash on every item ("expected N dimensions, not M")

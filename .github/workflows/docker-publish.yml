@@ -51,7 +51,7 @@ jobs:
       - run: uv run ruff check newsparser tests
       - name: Apply schema
         run: |
-          sed 's/{EMBED_DIM}/8/g' docker/db/init/schema.sql.template > /tmp/schema.sql
+          sed 's/{EMBED_DIM}/8/g' newsparser/schema.sql.template > /tmp/schema.sql
           PGPASSWORD=newsparser psql -h localhost -p 5434 -U newsparser -d newsparser_test -f /tmp/schema.sql
       - run: uv run python tests/test_processor_e2e.py
       - run: uv run python tests/test_api_smoke.py

@@ -14,8 +14,25 @@ class Database:
         self.dsn = dsn
         self.pool: asyncpg.Pool = None  # type: ignore[assignment]  # set in connect()
 
+    async def ensure_schema(self, embed_dim: int) -> None:
+        """Apply the schema idempotently (all DDL is IF NOT EXISTS).
+
+        Reads the packaged template — services self-initialize on a fresh
+        database without relying on postgres' init-only mechanism.
+        """
+        from pathlib import Path
+
+        template = Path(__file__).parent / "schema.sql.template"
+        sql = template.read_text().replace("{EMBED_DIM}", str(embed_dim))
+        await self.pool.execute(sql)
+
     async def connect(self) -> None:
         async def _init_conn(conn):
+            # the extension may be missing on a fresh database (the app
+            # user owns it, so it can create extensions) — without this
+            # register_vector fails and the pool never comes up, which
+            # would also block ensure_schema (chicken-and-egg)
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
             await register_vector(conn)
             # return json/jsonb as parsed objects, not strings
             await conn.set_type_codec(
