@@ -5,6 +5,7 @@ Fallback: OpenRouter when local is unreachable or returns an error.
 Both endpoints must speak the OpenAI API format.
 """
 
+import asyncio
 import json
 import time
 
@@ -178,17 +179,40 @@ class LLMClient:
         return self._client
 
     async def _post(self, ep: _Endpoint | _EmbedEndpoint, path: str, payload: dict) -> dict:
-        """POST to ep.base_url/path. For proxied endpoints a one-off client is used."""
+        """POST to ep.base_url/path. For proxied endpoints a one-off client is used.
+
+        Rate limits (429) get their own retry loop with the server's
+        Retry-After (default 10s, exponential cap 40s): hammering the
+        provider while it is throttling us only wastes the budget.
+        """
         url = f"{ep.base_url}/{path}"
         headers = {"Authorization": f"Bearer {ep.api_key}"}
-        if ep.proxy:
-            proxy = ep.proxy.replace("socks5://", "socks5://")
-            async with httpx.AsyncClient(timeout=self._client.timeout, proxy=proxy) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-        else:
-            resp = await self._client.post(url, json=payload, headers=headers)
+        proxy = ep.proxy
+        backoff = 10.0
+        for attempt in range(3):
+            if ep.proxy:
+                async with httpx.AsyncClient(timeout=self._client.timeout, proxy=proxy) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+            else:
+                resp = await self._client.post(url, json=payload, headers=headers)
+            if resp.status_code != 429:
+                resp.raise_for_status()
+                return resp.json()
+            if attempt == 2:
+                break  # exhausted: raise below (fallback endpoints may differ)
+            retry_after = resp.headers.get("retry-after")
+            wait = backoff
+            if retry_after and retry_after.replace(".", "").isdigit():
+                wait = float(retry_after)
+            wait = min(wait, 40.0)
+            logger.warning(
+                "{} rate limited (429), waiting {:.0f}s before retry {}/2",
+                ep.name, wait, attempt + 1,
+            )
+            await asyncio.sleep(wait)
+            backoff *= 2
         resp.raise_for_status()
-        return resp.json()
+        return resp.json()  # unreachable, keeps type-checkers happy
 
     async def chat(self, prompt: str, max_tokens: int = 2048) -> str:
         """Chat completion, trying each endpoint in order until one succeeds.
