@@ -209,20 +209,41 @@ class Database:
         return [dict(r) for r in rows]
 
     async def search_events(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        """Full-text search over event summaries (Russian + English configs)."""
+        """Full-text search over event summaries (Russian + English configs).
+
+        Transliterated query variants (ASEAN -> АСЕАН and back) are OR'ed
+        in: the stemmers handle single scripts, cross-script matches need
+        the variants.
+        """
+        from newsparser.translit import search_variants
+
+        variants = search_variants(query)[:3]
+        conditions = []
+        params: list[Any] = []  # $1 = query (rank), $2 = limit, $3+ variants
+        for v in variants:
+            ph = f"${len(params) + 3}"
+            conditions.append(
+                f"(e.fts @@ (websearch_to_tsquery('russian', {ph})"
+                f" || websearch_to_tsquery('english', {ph})))"
+            )
+            params.append(v)
+        # rank by the original query, filter by any variant
+        params_for_exec = [query, limit, *params]
+        where = " OR ".join(conditions)
+        rank = (
+            "ts_rank(e.fts, websearch_to_tsquery('russian', $1)"
+            " || websearch_to_tsquery('english', $1))"
+        )
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT e.id, e.summary, e.sources_count, e.updated_at, e.tags,
-                   ts_rank(e.fts, websearch_to_tsquery('russian', $1)
-                              || websearch_to_tsquery('english', $1)) AS rank
+                   {rank} AS rank
             FROM events e
-            WHERE e.fts @@ (websearch_to_tsquery('russian', $1)
-                               || websearch_to_tsquery('english', $1))
+            WHERE {where}
             ORDER BY rank DESC, e.updated_at DESC
             LIMIT $2
             """,
-            query,
-            limit,
+            *params_for_exec,
         )
         return [dict(r) for r in rows]
 
