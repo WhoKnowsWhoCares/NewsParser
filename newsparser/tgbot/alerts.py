@@ -84,7 +84,7 @@ async def _send_text(bot_token: str, admin_chat: str, proxy: str | None, text: s
 
 class AdminAlerter:
     """Watchdog loop inside the bot worker: checks queue depth / worker
-    liveness / embedder state and reports problems to the admin chat.
+    liveness and reports problems to the admin chat.
 
     Cooldowns keep repeated failures from spamming: an alert for the same
     key is sent at most once per hour.
@@ -149,22 +149,11 @@ class AdminAlerter:
                 problems.append(f"postgres unreachable: {e}")
         del db_ok
 
-        # local embedder health (primary embeddings endpoint); empty
-        # embeddings_base_url falls back to the chat base (same as LLMClient)
-        base = (settings.embeddings_base_url or settings.llm_base_url or "").strip()
-        if base:
-            try:
-                import httpx
+        # NOTE: no embedder alert on purpose. The embedder (local Studio) goes
+        # down often and self-heals, and the pipeline degrades gracefully
+        # (items saved with embedding_stale, backfilled later) — alerting
+        # on it just spams the admin chat.
 
-                async with httpx.AsyncClient(
-                    proxy=get_settings().tg_proxy_url or None, timeout=10
-                ) as client:
-                    r = await client.get(base.rstrip("/") + "/models")
-                    if r.status_code >= 500 and not self._suppressed("embedder"):
-                        problems.append(f"embedder returns {r.status_code}")
-            except Exception as e:  # noqa: BLE001
-                if not self._suppressed("embedder"):
-                    problems.append(f"embedder unreachable: {e}")
         return problems
 
     async def run(self, interval: float = 300.0) -> None:
