@@ -11,6 +11,7 @@ import asyncio
 import html
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from loguru import logger
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -36,6 +37,7 @@ from newsparser.tgbot.alerts import AdminAlerter
 
 POLL_DELAY = 5.0
 SUBSCRIBERS_KEY = "tgbot:subscribers"
+SENT_KEY = "tgbot:sent"  # hash: "chat_id:event_id" -> message_id (survives restarts)
 
 # ConversationHandler states for the /filters dialog
 (FS_MENU, FS_WAIT_VALUE) = range(2)
@@ -83,11 +85,9 @@ class Bot:
     def __init__(self):
         self.settings = get_settings()
         self.db = Database(self.settings.pg_dsn)
-        self.redis = None
+        self.redis: Any = None
         self.app: Application = None  # type: ignore[assignment]
         self.last_check = datetime.now(timezone.utc)
-        # event_id -> (chat_id, message_id) per subscriber chat
-        self.sent: dict[int, dict[int, int]] = {}
 
     async def start(self) -> None:
         await self.db.connect()
@@ -137,7 +137,11 @@ class Bot:
             )
         try:
             while True:
-                await self.poll_events()
+                try:
+                    await self.poll_events()
+                except Exception as e:  # noqa: BLE001 - transient DB/redis/telegram errors
+                    # must not kill the bot: log and keep polling
+                    logger.error("poll_events failed: {}", e)
                 await asyncio.sleep(POLL_DELAY)
         finally:
             if alerter_task:
@@ -248,6 +252,15 @@ class Bot:
         )
         return FS_MENU
 
+    # --- per-(chat, event) sent-message map (redis, survives restarts) ---
+
+    async def _sent_msg_id(self, chat_id: int, event_id: int) -> int | None:
+        raw = await self.redis.hget(SENT_KEY, f"{chat_id}:{event_id}")
+        return int(raw) if raw else None
+
+    async def _set_sent_msg_id(self, chat_id: int, event_id: int, message_id: int) -> None:
+        await self.redis.hset(SENT_KEY, f"{chat_id}:{event_id}", message_id)
+
     # --- likes ---
 
     async def on_like(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -266,9 +279,15 @@ class Bot:
     # --- event polling ---
 
     async def poll_events(self) -> None:
-        rows = await self.db.events_updated_since(self.last_check, limit=20)
+        rows = await self.db.events_updated_since(self.last_check, limit=50)
         if rows:
-            self.last_check = max(r["updated_at"] for r in rows)
+            if len(rows) == 50:
+                # batch full: there may be more events beyond the limit —
+                # advance only to the OLDEST seen so the next poll re-reads
+                # the tail (the sent-map dedup keeps this from duplicating)
+                self.last_check = min(r["updated_at"] for r in rows)
+            else:
+                self.last_check = max(r["updated_at"] for r in rows)
         subscribers = await self.subscribers()
         if not subscribers:
             return
@@ -290,22 +309,7 @@ class Bot:
                 if not uf.matches(user_filters[chat_id], event_ctx):
                     continue
                 try:
-                    sent_for_chat = self.sent.get(chat_id, {})
-                    msg_id = sent_for_chat.get(event_id)
-                    tg_id = row["tg_message_id"]
-                    if tg_id:
-                        try:
-                            await self.app.bot.edit_message_text(
-                                text,
-                                chat_id=chat_id,
-                                message_id=tg_id,
-                                parse_mode="HTML",
-                                reply_markup=keyboard(event_id),
-                                disable_web_page_preview=True,
-                            )
-                            continue
-                        except Exception as e:
-                            logger.warning("Edit failed for event {}: {}", event_id, e)
+                    msg_id = await self._sent_msg_id(chat_id, event_id)
                     if msg_id:
                         try:
                             await self.app.bot.edit_message_text(
@@ -318,7 +322,10 @@ class Bot:
                             )
                             continue
                         except Exception as e:
-                            logger.warning("Edit (local map) failed: {}", e)
+                            # message deleted/blocked -> fall through and resend
+                            logger.warning(
+                                "Edit failed for event {} in {}: {}", event_id, chat_id, e
+                            )
                     msg = await self.app.bot.send_message(
                         chat_id,
                         text,
@@ -326,8 +333,7 @@ class Bot:
                         reply_markup=keyboard(event_id),
                         disable_web_page_preview=True,
                     )
-                    self.sent.setdefault(chat_id, {})[event_id] = msg.message_id
-                    await self.db.set_tg_message(event_id, msg.message_id)
+                    await self._set_sent_msg_id(chat_id, event_id, msg.message_id)
                 except Exception as e:
                     logger.error("Send to {} failed: {}", chat_id, e)
 

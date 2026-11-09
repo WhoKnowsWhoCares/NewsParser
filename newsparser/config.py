@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     # queue cap: max items in redis stream (0 = unlimited).
     # Items beyond this are dropped by parsers before entering the queue.
     queue_max_length: int = 10
+    # give up on a poison item after this many delivery attempts (ack & drop)
+    max_retries: int = 5
     # parallel item processing inside the processor (LLM calls dominate latency)
     processor_concurrency: int = 3
 

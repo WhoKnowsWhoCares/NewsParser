@@ -43,6 +43,11 @@ from newsparser.redis_queue import (
 STREAM_CONSUMER_GROUP = "processors"
 CONSUMER_NAME = "processor-1"
 
+# serializes the dedup read-decide-write section (find_similar_event ->
+# create_event / update_event_summary): LLM work stays concurrent, but two
+# similar items from one batch must not both create duplicate events
+_dedup_lock = asyncio.Lock()
+
 
 def _allowed_categories(settings: Settings) -> set[str]:
     """Parse ALLOWED_CATEGORIES (comma-separated) into a lowercase set."""
@@ -90,57 +95,65 @@ async def process_item(
         return bool(tags) and tags[0].lower() in allowed
 
     if embedding is not None:
-        similar = await db.find_similar_event(embedding, settings.dedup_threshold)
-        if similar:
-            event_id, similarity = similar
-            DEDUP_MATCHES.inc()
-            logger.info("Matched event {} (similarity {:.3f}) for {}", event_id, similarity, link)
-            event = await db.get_event(event_id)
-            merged, tags, impact = await llm.summarize_merge(
-                event["summary"], title, text, tags=list(event["tags"] or []),
-                impact=event["impact"],
-            )
-            new_embedding = await llm.embed(merged)
-            await db.update_event_summary(
-                event_id, summary=merged, embedding=new_embedding, tags=tags,
-                impact=impact,
-            )
-        else:
-            summary, tags, impact = await llm.summarize_new_event(title, text)
-            if not _category_allowed(tags):
-                logger.info("Category {} filtered out: {}", tags[:1], link)
-                ITEMS_PROCESSED.labels("filtered").inc()
-                # save the item without an event so dedup-by-link still works
-                embedding = None
-                event_id = None
-                published_raw = item.get("published_at")
-                published_at = None
-                if published_raw:
-                    try:
-                        published_at = datetime.fromisoformat(published_raw)
-                        if published_at.tzinfo is None:
-                            published_at = published_at.replace(tzinfo=timezone.utc)
-                    except ValueError:
-                        pass
-                await db.insert_news_item(
-                    source_type=item.get("source_type", "unknown"),
-                    source=item.get("source", ""),
-                    title=title,
-                    text=text,
-                    summary=item.get("summary", ""),
-                    link=link,
-                    language=item.get("language", "ru"),
-                    published_at=published_at,
-                    embedding=None,
-                    embedding_stale=False,
-                    event_id=None,
+        # dedup is not fork-safe under parallel batch processing: hold the
+        # lock for the whole read-decide-write section. LLM summarize calls
+        # inside still overlap with other items' LLM calls via the event loop.
+        async with _dedup_lock:
+            similar = await db.find_similar_event(embedding, settings.dedup_threshold)
+            if similar:
+                event_id, similarity = similar
+                DEDUP_MATCHES.inc()
+                logger.info(
+                    "Matched event {} (similarity {:.3f}) for {}", event_id, similarity, link
                 )
-                return
-            merged_embedding = await llm.embed(summary)
-            event_id = await db.create_event(
-                summary=summary, embedding=merged_embedding, tags=tags, impact=impact
-            )
-            logger.info("New event {} created for {} [tags: {}]", event_id, link, tags)
+                event = await db.get_event(event_id)
+                if event is None:  # deleted between find and fetch — treat as new
+                    event = {"summary": "", "tags": [], "impact": "low"}
+                merged, tags, impact = await llm.summarize_merge(
+                    event["summary"], title, text, tags=list(event["tags"] or []),
+                    impact=event["impact"],
+                )
+                new_embedding = await llm.embed(merged)
+                await db.update_event_summary(
+                    event_id, summary=merged, embedding=new_embedding, tags=tags,
+                    impact=impact,
+                )
+            else:
+                summary, tags, impact = await llm.summarize_new_event(title, text)
+                if not _category_allowed(tags):
+                    logger.info("Category {} filtered out: {}", tags[:1], link)
+                    ITEMS_PROCESSED.labels("filtered").inc()
+                    # save the item without an event so dedup-by-link still works
+                    embedding = None
+                    event_id = None
+                    published_raw = item.get("published_at")
+                    published_at = None
+                    if published_raw:
+                        try:
+                            published_at = datetime.fromisoformat(published_raw)
+                            if published_at.tzinfo is None:
+                                published_at = published_at.replace(tzinfo=timezone.utc)
+                        except ValueError:
+                            pass
+                    await db.insert_news_item(
+                        source_type=item.get("source_type", "unknown"),
+                        source=item.get("source", ""),
+                        title=title,
+                        text=text,
+                        summary=item.get("summary", ""),
+                        link=link,
+                        language=item.get("language", "ru"),
+                        published_at=published_at,
+                        embedding=None,
+                        embedding_stale=False,
+                        event_id=None,
+                    )
+                    return
+                merged_embedding = await llm.embed(summary)
+                event_id = await db.create_event(
+                    summary=summary, embedding=merged_embedding, tags=tags, impact=impact
+                )
+                logger.info("New event {} created for {} [tags: {}]", event_id, link, tags)
         ITEMS_PROCESSED.labels("ok").inc()
     else:
         # no vector -> cannot dedup; still summarize so the event exists
@@ -346,9 +359,10 @@ async def main() -> None:
             # times_delivered == 1, so we claim and reprocess them.
             pending = await redis_client.xpending_range(
                 settings.redis_stream, STREAM_CONSUMER_GROUP, min="-", max="+",
-                count=10, consumername=CONSUMER_NAME,
+                count=50, consumername=CONSUMER_NAME,
             )
             retry_ids = [str(p["message_id"]) for p in pending]
+            deliveries = {str(p["message_id"]): p["times_delivered"] for p in pending}
             for msg_id in retry_ids:
                 msgs = await redis_client.xrange(settings.redis_stream, min=msg_id, max=msg_id)
                 if not msgs:
@@ -362,7 +376,24 @@ async def main() -> None:
                     continue
                 if isinstance(data, bytes):
                     data = data.decode()
-                item = json.loads(data)
+                # poison-pill guard: a payload that never parses must not
+                # spin in retry forever (and must not crash the loop)
+                try:
+                    item = json.loads(data)
+                except json.JSONDecodeError as e:
+                    logger.error("Corrupt payload for msg {} ({}), acking", msg_id, e)
+                    await ack_news(redis_client, settings.redis_stream, msg_id)
+                    continue
+                # give up after MAX_RETRIES attempts: permanent failure —
+                # ack (drop) so the retry loop cannot spin forever
+                if int(deliveries.get(msg_id, 0)) > settings.max_retries:
+                    logger.error(
+                        "Giving up on msg {} after {} attempts: {}",
+                        msg_id, settings.max_retries, item.get("link", "?"),
+                    )
+                    ITEMS_FAILED.inc()
+                    await ack_news(redis_client, settings.redis_stream, msg_id)
+                    continue
                 try:
                     await process_item(db, llm, redis_client, settings, item)
                     await ack_news(redis_client, settings.redis_stream, msg_id)
