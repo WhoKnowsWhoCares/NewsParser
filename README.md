@@ -118,6 +118,8 @@ All parameters live in `.env` (see `.env_template`). Key ones:
 - Site: [BCS Express](https://bcs-express.ru) (RSS disabled: the RIA feed
   brought mostly irrelevant content — `RSS_SOURCES` in `rss_parser.py` is
   empty; re-add finance feeds there to enable it again)
+- RSS: BBC Business, Reuters stories (via the Google News mirror — Reuters
+  shut down its public RSS; both feeds are fetched through the socks proxy)
 - Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1,
   @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
   @iticapital

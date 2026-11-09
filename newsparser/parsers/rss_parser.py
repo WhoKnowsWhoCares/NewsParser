@@ -19,9 +19,24 @@ from newsparser.parsers.common import BROWSER_HEADERS, html_to_text
 from newsparser.redis_queue import push_news
 
 # source domain -> (rss url, css selector for full text on article page)
-# Empty: the RIA feed brought too much irrelevant content; re-add entries
-# here (finance-focused feeds only) to enable the RSS parser again.
-RSS_SOURCES: dict[str, tuple[str, str]] = {}
+# Empty selector = use the RSS summary only (no article fetch).
+#
+# Both feeds are blocked from RU IPs and from the host in general, so the
+# collector fetches them through TG_PROXY_URL (socks5, see the session below).
+# Reuters shut down its public RSS feeds (401) — the entry below is the
+# Google News mirror of reuters.com stories.
+BBC_CSS = "div[data-component='text-block'] p"
+RSS_SOURCES: dict[str, tuple[str, str]] = {
+    "feeds.bbci.co.uk": (
+        "https://feeds.bbci.co.uk/news/business/rss.xml",
+        BBC_CSS,
+    ),
+    "news.google.com": (
+        "https://news.google.com/rss/search?q=when:2d+site:reuters.com+"
+        "(business+OR+markets+OR+economy)&hl=en-US&gl=US&ceid=US:en",
+        "",  # google news links redirect to reuters.com (401 from here)
+    ),
+}
 
 
 async def fetch_text(session: aiohttp.ClientSession, link: str, css_selector: str) -> str:
@@ -79,7 +94,17 @@ async def run_rss_parser(settings: Settings, redis_client) -> None:
             old = pushed_recent[0]
             pushed_links.discard(old)
         return True
-    async with aiohttp.ClientSession(trust_env=True) as session:
+    # blocked feeds (BBC/Reuters) need the socks proxy; TG_PROXY_URL is
+    # already used for the Telegram API and OpenRouter
+    proxy = settings.tg_proxy_url or ""
+    if proxy.startswith("socks5"):
+        from aiohttp_socks import ProxyConnector
+
+        connector = ProxyConnector.from_url(proxy)
+        session_cm = aiohttp.ClientSession(connector=connector, trust_env=True)
+    else:
+        session_cm = aiohttp.ClientSession(trust_env=True)
+    async with session_cm as session:
         while True:
             backoff = min(interval * 2**consecutive_errors, interval * 16)
             for source, (rss_url, css_selector) in RSS_SOURCES.items():

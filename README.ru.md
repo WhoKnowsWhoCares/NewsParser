@@ -118,6 +118,8 @@ postgres/redis-контейнерах со схемой из шаблона (`EM
 - Сайт: [BCS Express](https://bcs-express.ru) (RSS отключён: фид РИА приносил
   в основном нерелевантный контент — `RSS_SOURCES` в `rss_parser.py` пуст;
   верните finance-фиды туда, чтобы снова включить)
+- RSS: BBC Business, ленты Reuters (через зеркало Google News — публичный RSS
+  Reuters закрыт; оба фида идут через socks-прокси)
 - Telegram: @interfaxonline, @rbc_news, @rian_ru, @prime1,
   @markettwits, @if_market_news, @thewallstreetpro, @russianmacro, @truecon,
   @iticapital
