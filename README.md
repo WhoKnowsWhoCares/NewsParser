@@ -55,6 +55,8 @@ are built by CI on every push to the `prod` branch (also on `v*` tags).
 
 ```bash
 cp .env_template .env          # fill in api_id/api_hash, bot_token
+touch newsparser.session       # must exist BEFORE the first start, or docker
+                               # mounts a directory instead of the file
 docker compose -f docker/docker-compose.yml up -d --build
 # web: http://localhost:8003
 ```

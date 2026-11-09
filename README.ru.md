@@ -55,6 +55,8 @@ docker compose -f docker/docker-compose.prod.yml up -d
 
 ```bash
 cp .env_template .env          # заполнить api_id/api_hash, bot_token
+touch newsparser.session       # файл должен существовать ДО первого старта,
+                               # иначе docker смонтирует каталог вместо файла
 docker compose -f docker/docker-compose.yml up -d --build
 # веб: http://localhost:8003
 ```
