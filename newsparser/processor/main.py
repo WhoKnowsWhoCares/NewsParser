@@ -330,6 +330,21 @@ async def main() -> None:
 
     db = Database(settings.pg_dsn)
     await db.connect()
+
+    # fail fast on an EMBED_DIM / schema mismatch: inserts would otherwise
+    # crash on every item ("expected N dimensions, not M")
+    actual_dim = await db.pool.fetchval(
+        "SELECT atttypmod FROM pg_attribute "
+        "WHERE attrelid = 'news_items'::regclass AND attname = 'embedding'"
+    )
+    if actual_dim is not None and actual_dim != settings.embed_dim:
+        raise RuntimeError(
+            f"EMBED_DIM mismatch: settings say {settings.embed_dim}, "
+            f"DB schema has vector({actual_dim}). Recreate pgdata or set "
+            f"EMBED_DIM={actual_dim} in .env."
+        )
+    logger.info("Embedding dimension check passed (EMBED_DIM={})", settings.embed_dim)
+
     llm = LLMClient(settings)
 
     logger.info(

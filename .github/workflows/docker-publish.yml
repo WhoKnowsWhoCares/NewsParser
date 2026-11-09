@@ -12,7 +12,53 @@ env:
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/newsparser
 
 jobs:
+  # prod images must ship tested code: run the same suite as ci.yml first
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5434
+      TEST_DB_NAME: newsparser_test
+      TEST_DB_USER: newsparser
+      TEST_DB_PASSWORD: newsparser
+      TEST_REDIS_HOST: localhost
+      TEST_REDIS_PORT: 6380
+      EMBED_DIM: "8"
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: newsparser_test
+          POSTGRES_USER: newsparser
+          POSTGRES_PASSWORD: newsparser
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U newsparser -d newsparser_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync
+      - run: uv run ruff check newsparser tests
+      - name: Apply schema
+        run: |
+          sed 's/{EMBED_DIM}/8/g' docker/db/init/schema.sql.template > /tmp/schema.sql
+          PGPASSWORD=newsparser psql -h localhost -p 5434 -U newsparser -d newsparser_test -f /tmp/schema.sql
+      - run: uv run python tests/test_processor_e2e.py
+      - run: uv run python tests/test_api_smoke.py
+      - run: uv run python tests/test_stale_backfill_e2e.py
+
   build-push:
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: read

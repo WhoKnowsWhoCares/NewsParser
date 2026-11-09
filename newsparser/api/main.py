@@ -1,6 +1,7 @@
 """FastAPI: /api/events (from redis cache / postgres) + single-page HTML UI."""
 
 import asyncio
+import contextlib
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
     sync_task = asyncio.create_task(_periodic_cache_sync())
     yield
     sync_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await sync_task  # let the task close its own db pool cleanly
     await db.close()
     await redis_client.aclose()
 

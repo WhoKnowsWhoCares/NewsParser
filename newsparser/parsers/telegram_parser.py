@@ -97,6 +97,19 @@ async def run_telegram_parser(settings: Settings, redis_client) -> None:
     await client.start()  # interactive login on first run only
 
     channels = settings.channels
+    from collections import deque
+    pushed_recent: deque = deque(maxlen=2000)
+    pushed_links: set[str] = set()
+
+    def _remember(link: str) -> bool:
+        """Returns True when the link is new (bounded memory)."""
+        if link in pushed_links:
+            return False
+        pushed_links.add(link)
+        pushed_recent.append(link)
+        if len(pushed_recent) == pushed_recent.maxlen:
+            pushed_links.discard(pushed_recent[0])
+        return True
     logger.info("Telegram parser started for channels: {}", channels)
 
     @client.on(events.NewMessage(chats=channels))
@@ -119,6 +132,13 @@ async def run_telegram_parser(settings: Settings, redis_client) -> None:
     async def _handle_message(settings, redis_client, message):
         item = message_to_item(settings, message)
         if item is None:
+            return
+        # link dedup: the poll fallback re-reads the last 3 posts of every
+        # channel every cycle — without this the stream fills with repeats
+        # and the queue cap starts dropping LIVE messages. In-memory (like
+        # rss_parser): after a restart the poll re-pushes the last 3 posts
+        # once, the processor's link dedup drops them.
+        if not _remember(item["link"]):
             return
         result = await push_news(
             redis_client, settings.redis_stream, item,

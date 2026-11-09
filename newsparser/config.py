@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     llm_model: str = "gemma-4-E4B-it-GGUF"
     embeddings_base_url: str = ""  # empty -> same as llm_base_url
     embeddings_model: str = "Qwen/Qwen3-Embedding-8B-GGUF"
-    embed_dim: int = 4096
+    # must match the embeddings model dimension AND the DB schema (vector(dim));
+    # 2000 = Matryoshka prefix of qwen3-embedding-8b, fits pgvector's 2000-dim
+    # index limit. A mismatch with the initialized schema fails at insert time.
+    embed_dim: int = 2000
 
     # openrouter fallback for CHAT only (activated when openrouter_api_key is set).
     # Embeddings never fall back: vectors from different models are incomparable.

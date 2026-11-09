@@ -51,10 +51,21 @@ async def deliver_spooled(bot_token: str, admin_chat: str, proxy: str | None) ->
     redis = await create_redis(settings)
     try:
         while True:
-            raw = await redis.rpop(ALERTS_CHANNEL + ":spool")
+            # rpoplpush moves to a processing list: if delivery fails, the
+            # alert stays there and the next run re-tries it (no loss)
+            raw = await redis.rpoplpush(ALERTS_CHANNEL + ":spool", ALERTS_CHANNEL + ":processing")
             if raw is None:
                 break
-            await _send_text(bot_token, admin_chat, proxy, str(raw))
+            text = str(raw)
+            ok = await _send_text(bot_token, admin_chat, proxy, text)
+            if ok:
+                await redis.lrem(ALERTS_CHANNEL + ":processing", 1, text)
+            else:
+                # give up this cycle: leave it in processing; the next run
+                # pops from spool first, so re-queue to spool's head
+                await redis.lpush(ALERTS_CHANNEL + ":spool", text)
+                await redis.lrem(ALERTS_CHANNEL + ":processing", 1, text)
+                break
     finally:
         await redis.aclose()
 
@@ -138,19 +149,22 @@ class AdminAlerter:
                 problems.append(f"postgres unreachable: {e}")
         del db_ok
 
-        # local embedder health (primary embeddings endpoint)
-        try:
-            import httpx
+        # local embedder health (primary embeddings endpoint); empty
+        # embeddings_base_url falls back to the chat base (same as LLMClient)
+        base = (settings.embeddings_base_url or settings.llm_base_url or "").strip()
+        if base:
+            try:
+                import httpx
 
-            async with httpx.AsyncClient(
-                proxy=get_settings().tg_proxy_url or None, timeout=10
-            ) as client:
-                r = await client.get(settings.embeddings_base_url.rstrip("/") + "/models")
-                if r.status_code >= 500 and not self._suppressed("embedder"):
-                    problems.append(f"embedder returns {r.status_code}")
-        except Exception as e:  # noqa: BLE001
-            if not self._suppressed("embedder"):
-                problems.append(f"embedder unreachable: {e}")
+                async with httpx.AsyncClient(
+                    proxy=get_settings().tg_proxy_url or None, timeout=10
+                ) as client:
+                    r = await client.get(base.rstrip("/") + "/models")
+                    if r.status_code >= 500 and not self._suppressed("embedder"):
+                        problems.append(f"embedder returns {r.status_code}")
+            except Exception as e:  # noqa: BLE001
+                if not self._suppressed("embedder"):
+                    problems.append(f"embedder unreachable: {e}")
         return problems
 
     async def run(self, interval: float = 300.0) -> None:

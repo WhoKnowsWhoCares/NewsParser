@@ -63,7 +63,22 @@ def parse_published(entry) -> datetime | None:
 async def run_rss_parser(settings: Settings, redis_client) -> None:
     interval = settings.poll_interval
     consecutive_errors = 0
-    pushed_links: set[str] = set()  # de-dup across polls (link dedup in processor is too late)
+    # de-dup across polls (link dedup in processor is too late);
+    # bounded: an unbounded set would leak memory over months of uptime
+    from collections import deque
+    pushed_recent = deque(maxlen=2000)
+    pushed_links: set[str] = set()
+
+    def _remember(link: str) -> bool:
+        """Returns True when the link is new (and remembers it)."""
+        if link in pushed_links:
+            return False
+        pushed_links.add(link)
+        pushed_recent.append(link)
+        if len(pushed_recent) == pushed_recent.maxlen:  # evict the oldest
+            old = pushed_recent[0]
+            pushed_links.discard(old)
+        return True
     async with aiohttp.ClientSession(trust_env=True) as session:
         while True:
             backoff = min(interval * 2**consecutive_errors, interval * 16)
@@ -87,9 +102,8 @@ async def run_rss_parser(settings: Settings, redis_client) -> None:
                     title = getattr(entry, "title", "")
                     if not link or not title:
                         continue
-                    if link in pushed_links:
+                    if not _remember(link):
                         continue  # already queued in an earlier poll
-                    pushed_links.add(link)
                     summary = html_to_text(getattr(entry, "summary", "") or "")
                     text = await fetch_text(session, link, css_selector)
                     published = parse_published(entry)
