@@ -46,6 +46,22 @@ class ModelKeeper:
         resp.raise_for_status()
         return {m["id"] for m in resp.json().get("data", [])}
 
+    async def _catalog(self) -> list[str]:
+        """Full model ids known to the server (/v1/models).
+
+        The load API resolves exact ids only — newer Studio builds return
+        404 'Model not found' for short org-less names.
+        """
+        resp = await self.client.get(f"{self.api}/v1/models", headers=self.headers)
+        resp.raise_for_status()
+        return [m["id"] for m in resp.json().get("data", [])]
+
+    def _resolve(self, short: str, catalog: list[str]) -> str | None:
+        for cid in catalog:
+            if self._short(cid).lower() == short.lower():
+                return cid
+        return None
+
     async def _load(self, model_path: str) -> None:
         # alongside: keep already-loaded models in VRAM (no eviction swap);
         # max_seq_length: 8192 is plenty for news, cuts KV cache from ~5GB to <1GB
@@ -106,10 +122,22 @@ class ModelKeeper:
             return
 
         missing = wanted - loaded
-        for model in sorted(missing):
-            logger.info("[model-keeper] loading {}", model)
+        catalog: list[str] = []
+        if missing:
             try:
-                await self._load(model)
+                catalog = await self._catalog()
+            except Exception as e:  # noqa: BLE001 - server may be down
+                logger.warning("[model-keeper] catalog fetch failed: {}", e)
+        for model in sorted(missing):
+            full = self._resolve(model, catalog)
+            if full is None:
+                logger.warning(
+                    "[model-keeper] {} not found in the server catalog; skip", model
+                )
+                continue
+            logger.info("[model-keeper] loading {} ({})", model, full)
+            try:
+                await self._load(full)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 409:
                     # load already in progress from a previous pass - fine
