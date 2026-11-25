@@ -137,6 +137,7 @@
   <header>
     <h1>Новости: финансы и экономика</h1>
     <span class="updated" id="updated"></span>
+    <span class="updated" id="backlog" title="новости в очереди на обработку"></span>
   </header>
   <details class="metrics-panel" id="metrics-panel">
     <summary>Метрики за последний час (5-минутные интервалы)</summary>
@@ -234,6 +235,22 @@
       } catch (err) {
         document.getElementById('sources-body').innerHTML =
           '<tr><td colspan="4" class="err">Не удалось загрузить источники</td></tr>';
+      }
+    }
+
+    // unprocessed queue depth (lag + pending), shown as a header badge
+    async function loadBacklog() {
+      const el = document.getElementById('backlog');
+      try {
+        const resp = await fetch('/api/backlog');
+        if (!resp.ok) throw new Error(resp.status);
+        const d = await resp.json();
+        if (d.total < 0) { el.textContent = ''; return; }
+        el.textContent = `в очереди: ${d.total} не разобрано` +
+          (d.pending ? ` · ${d.pending} в работе` : '');
+        el.style.color = d.total > 200 ? '#ff7b7b' : '';
+      } catch (err) {
+        el.textContent = '';
       }
     }
 
@@ -579,8 +596,10 @@
     loadTags();
     loadSourcesFilter();
     loadMetrics();
+    loadBacklog();
     setInterval(() => { if (!searchMode) load(); }, 30000);
     setInterval(loadSources, 60000);
+    setInterval(loadBacklog, 30000);
     setInterval(loadMetrics, 60000);  // раз в минуту достаточно: бакеты по 5м
   </script>
 </body>

@@ -120,6 +120,24 @@ async def tags():
     return {"tags": await db.all_tags()}
 
 
+@app.get("/api/backlog")
+async def backlog():
+    """Unprocessed queue depth: undelivered (lag) + in-flight (pending).
+
+    XLEN would count acked entries awaiting the retention trim — those are
+    done, so they are not part of the backlog.
+    """
+    settings = get_settings()
+    try:
+        groups = await redis_client.xinfo_groups(settings.redis_stream)
+        info = groups[0] if groups else {}
+        lag = int(info.get("lag", 0) or 0)
+        pending = int(info.get("pending", 0) or 0)
+        return {"lag": lag, "pending": pending, "total": lag + pending}
+    except Exception:
+        return {"lag": -1, "pending": -1, "total": -1}
+
+
 @app.get("/api/events/{event_id}")
 async def event_details(event_id: int):
     row = await db.pool.fetchrow(
